@@ -5,6 +5,7 @@ import numpy as np
 import tqdm
 from PIL import Image
 import torch.nn as nn
+from networks.shallow import Regressor
 
 from torchvision.transforms  import CenterCrop, Resize, Compose, InterpolationMode
 from utils.processing import make_normalize
@@ -26,8 +27,8 @@ def runnig_tests(input_csv, device, batch_size = 10):
     model = model.to(device).eval()
     model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
 
-    classifier = nn.Linear(1024, 1)
-    classifier.load_state_dict(torch.load('../ResNet-50_CLIP_Semantic/weights/linear_SVM/SVM.pt'))
+    classifier = Regressor(512).to(device)
+    classifier.load_state_dict(torch.load('weights/shallow/2_layers_relu.pt'))
     classifier.to(device).eval()
 
     transform = list()

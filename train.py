@@ -10,6 +10,7 @@ from utils.dataset_augmentations import createDataset
 from transformers import CLIPModel
 
 activations = {}
+torch.manual_seed(42)
 
 def get_activation(name):
     def hook(model, input, output):

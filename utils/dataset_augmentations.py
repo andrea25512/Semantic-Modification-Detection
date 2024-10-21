@@ -210,11 +210,12 @@ class ImageDatasetTest(datasets.ImageFolder):
         self.augmentations = augmentations
         self.imgs = self.samples  
         self.real_folder = os.path.join(root, 'real_RAISE_1k')
+        self.root = root
         self.synthetic_folders = [
-            os.path.join(root, 'dalle2'),
-            os.path.join(root, 'dalle3'),
-            os.path.join(root, 'midjourney-v5'),
-            os.path.join(root, 'firefly')
+            'dalle2',
+            'dalle3',
+            'midjourney-v5',
+            'firefly'
         ]
 
         self.real_images = [ f for f in os.listdir(self.real_folder) if f.endswith('.png') ]
@@ -228,6 +229,7 @@ class ImageDatasetTest(datasets.ImageFolder):
 
         real_image = Image.open(real_image_path).convert('RGB')
         real_images = [real_image]
+        tot_real_entries = []
 
         if self.augmentations:
             for aug in self.augmentations:
@@ -235,10 +237,12 @@ class ImageDatasetTest(datasets.ImageFolder):
         if self.transform:
             for i in range(len(real_images)):
                 real_images[i] = self.transform(real_images[i])
+                tot_real_entries.append("synthbuster/real_RAISE_1k/"+real_image_name)
 
         tot_synthetic_images = torch.Tensor([])
-        tot_synthetic_image_path = []
-        for synthetic_folder in self.synthetic_folders:
+        tot_fake_entries = []
+        for synthetic_type in self.synthetic_folders:
+            synthetic_folder = os.path.join(self.root, synthetic_type)
             synthetic_image_path = os.path.join(synthetic_folder, real_image_name)
 
             synthetic_image = Image.open(synthetic_image_path).convert('RGB')
@@ -250,11 +254,11 @@ class ImageDatasetTest(datasets.ImageFolder):
             if self.transform:
                 for i in range(len(synthetic_images)):
                     synthetic_images[i] = self.transform(synthetic_images[i])
-                    tot_synthetic_image_path.append(synthetic_image_path)
+                    tot_fake_entries.append("synthbuster/"+synthetic_type+"/"+real_image_name)
 
-            tot_synthetic_images = torch.cat(tot_synthetic_images,torch.stack(synthetic_images))
+            tot_synthetic_images = torch.cat((tot_synthetic_images, torch.stack(synthetic_images)), dim=0)
 
-        return torch.stack(real_images), tot_synthetic_images, real_image_path, torch.Tensor(tot_synthetic_image_path)
+        return torch.stack(real_images), tot_synthetic_images, tot_real_entries, tot_fake_entries
 
 def createDatasetTest(rootdataset):
     transform = transforms.Compose([transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),

@@ -6,59 +6,66 @@ import torch.nn as nn
 from torchvision.models import resnet50, ResNet50_Weights
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from utils.dataset_augmentations import createDatasetTest
+from utils.dataset_augmentations import createDataset
 from transformers import CLIPModel
-import pandas
+from networks.shallow import Regressor
 
 activations = {}
+torch.manual_seed(42)
 
 def get_activation(name):
     def hook(model, input, output):
         activations[name] = output
     return hook
 
-def test(device, N, batch_size, input_folder):
+def train(device, N, batch_size, input_folder):
     print(input_folder)
-    dataset = createDatasetTest(input_folder)
+    dataset = createDataset(input_folder)
+    train_dataset, test_dataset = random_split(dataset, [N, len(dataset) - N])
+    
+    print("Training images: ",len(train_dataset)," - Test images: ",len(test_dataset))
 
-    table = pandas.DataFrame(columns=['filename', 'clip'])
-
-    print("Total images: ",len(dataset))
-
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
     model = model.to(device).eval()
     model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
 
-    regresser = nn.Linear(1024, 1).to(device).eval()
+    regresser = Regressor(512).to(device)
+
+    learning_rate = 0.01
+    optimizer = optim.SGD(regresser.parameters(), lr=learning_rate)
 
     print(flush=True)
 
     ### training
     print("Running the Training")
 
-    with torch.no_grad():
-        for batch_idx, (real_images, synthetic_images, real_names, synth_names) in enumerate(tqdm(loader)):
-            total_images = torch.cat((real_images, synthetic_images), dim=0)
-            total_images = total_images.view(-1, 3, 224, 224)
-    
-            _ = model.get_image_features(pixel_values=total_images.clone().to(device)).cpu()
-            
-            next_to_last_layer_features = activations['next_to_last_layer'].cpu()
+    for batch_idx, (real_images, synthetic_images) in enumerate(tqdm(train_loader)):
+        total_images = torch.cat((real_images, synthetic_images), dim=0)
+        total_images = total_images.view(-1, 3, 224, 224)
+  
+        _ = model.get_image_features(pixel_values=total_images.clone().to(device)).cpu()
+        
+        next_to_last_layer_features = activations['next_to_last_layer'].cpu()
 
-            real_images_labels = torch.zeros(real_images.size(0)*real_images.size(1))
-            synthetic_images_labels = torch.ones(synthetic_images.size(0)*synthetic_images.size(1))
-            
-            labels = torch.cat((real_images_labels, synthetic_images_labels), dim=0).to(device)
-            labels = 2 * labels - 1  # Convert labels from 0/1 to -1/+1
+        real_images_labels = torch.zeros(real_images.size(0)*real_images.size(1))
+        synthetic_images_labels = torch.ones(synthetic_images.size(0)*synthetic_images.size(1))
+        
+        labels = torch.cat((real_images_labels, synthetic_images_labels), dim=0).to(device)
+        labels = 2 * labels - 1  # Convert labels from 0/1 to -1/+1
 
-            outputs = regresser(next_to_last_layer_features.to(device)).squeeze()
+        outputs = regresser(next_to_last_layer_features.to(device)).squeeze()
 
-            pandas.concat({'filename':})
+        loss = torch.mean(torch.clamp(1 - outputs * labels, min=0))
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
     # save
-    torch.save(regresser.state_dict(), 'weights/linear_SVM/SVM.pt')
+    torch.save(regresser.state_dict(), 'weights/shallow/2_layers_relu.pt')
 
 
 if __name__ == "__main__":
