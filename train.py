@@ -122,7 +122,7 @@ if __name__ == "__main__":
     parser.add_argument("--N"          , '-n', type=int, help="Size of the training N+N vectors", default=100)
     parser.add_argument("--device"     , '-d', type=str, help="Torch device", default='cuda:0')
     parser.add_argument("--layers"     , '-l', type=int, help="Number of layers of the regressor", default=3)
-    parser.add_argument("--learning_rate"     , '-r', type=int, help="Learning rate of the optimizer", default=0.001)
+    parser.add_argument("--learning_rate"     , '-r', type=float, help="Learning rate of the optimizer", default=0.001)
     args = vars(parser.parse_args())
     
     train(args['in_csv'], args['device'], args['N'], args['layers'], args['weights_dir'], args['learning_rate'])
