@@ -7,7 +7,7 @@ import torch.nn as nn
 from PIL import Image
 import torch.optim as optim
 import random
-
+from torch.utils.data import random_split, DataLoader
 from torchvision.transforms  import CenterCrop, Resize, Compose, InterpolationMode
 from utils.processing import make_normalize
 from utils.fusion import apply_fusion
@@ -15,23 +15,29 @@ from transformers import CLIPModel
 from networks.shallow import TwoRegressor, ThreeRegressor
 from copy import deepcopy
 from torch.utils.tensorboard import SummaryWriter
+from utils.dataset import createDataset
+from tqdm import tqdm
 
 activations = {}
 seed = 42
 hidde_size = 512
+torch.manual_seed(seed)
 
 def get_activation(name):
     def hook(model, input, output):
         activations[name] = output
     return hook
 
-def train(input_csv, device, N, layers, weights_dir, learning_rate, batch_size = 1):
-    rootdataset = os.path.dirname(os.path.abspath(input_csv))
+def train(rootdataset, device, dataset_ratio, layers, weights_dir, learning_rate, batch_size = 16):
+    dataset = createDataset(rootdataset)
+    train_size = int(dataset_ratio * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_test_dataset = random_split(dataset, [train_size, val_size])
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
 
-    table = pandas.read_csv(input_csv)
-    real_sample_indices = table.iloc[-1000:].sample(n=N, random_state=seed).index
-    random.seed(seed)
-    real_sample = table.loc[real_sample_indices].reset_index(drop=True)
+    split = len(val_test_dataset) // 2
+    val_dataset, test_dataset = random_split(val_test_dataset, [split, len(val_test_dataset)-split])
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 
     model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
     model = model.to(device).eval()
@@ -48,81 +54,70 @@ def train(input_csv, device, N, layers, weights_dir, learning_rate, batch_size =
         print("Only supported from 1 to 3 layers")
         exit()
     
-
     optimizer = optim.AdamW(regresser.parameters(), lr=learning_rate)
-
-    transform = list()
-    print('input resize:', 'Clip224', flush=True)
-    transform.append(Resize(224, interpolation=InterpolationMode.BICUBIC))
-    transform.append(CenterCrop((224, 224)))
-    
-    transform.append(make_normalize("clip"))
-    transform = Compose(transform)
     print(flush=True)
+    delta = 0.5
 
     name = None
     if(layers == 1):
-        name = '1_layers_'+str(learning_rate)+'_optim_'+str(type(optimizer).__name__)+'_N'+str(N)
+        name = '1_layers_'+str(learning_rate)+'_optim_'+str(type(optimizer).__name__)+'_N'+str(dataset_ratio)
     else:
-        name = str(layers)+'_layers_'+str(hidde_size)+'_ReLU_'+str(learning_rate)+'_optim_'+str(type(optimizer).__name__)+'_N'+str(N)
+        name = f"{layers}_layers_{hidde_size}_ReLU_{learning_rate}_optim_{type(optimizer).__name__}_N{dataset_ratio}_mse"
     print("Output name: ",name)
     writer = SummaryWriter('runs/'+name)
 
     ### training
     print("Running the Training")
-    batch_img = []
-    batch_classes = []
     best_loss = float('inf')
     #best_model = None
-    for index in tqdm.tqdm(range(len(real_sample))):
-        real_filename = os.path.join(rootdataset, real_sample.loc[index, 'filename'])
-        synthetic_choice = random.choice(["dalle2", "dalle3", "firefly", "midjourney-v5"])
-        synthetic_filename = os.path.join(rootdataset, "synthbuster/"+synthetic_choice+"/"+real_sample.loc[index, 'filename'].split('/')[-1])
-        batch_img.append(transform(Image.open(real_filename).convert('RGB')))
-        batch_classes.append(0)
-        batch_img.append(transform(Image.open(synthetic_filename).convert('RGB')))
-        batch_classes.append(1)
+    for epoch in range(1):
+        regresser.train()
+        for index, (inpainted_images, inpainted_ratio) in enumerate(tqdm(train_loader)):
+            images = inpainted_images.view(-1, 3, 224, 224)
+            
+            _ = model.get_image_features(pixel_values=images.clone().to(device)).cpu()
+            next_to_last_layer_features = activations['next_to_last_layer'].cpu()
 
-        batch_img = torch.stack(batch_img, 0)
+            outputs = regresser(next_to_last_layer_features.to(device)).squeeze()
+            loss = nn.functional.mse_loss(outputs.cpu(), inpainted_ratio.float())
+            writer.add_scalar('training loss', loss.item(), epoch * len(train_loader) + index)
 
-        _ = model.get_image_features(pixel_values=batch_img.clone().to(device)).cpu()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        ### Validation phase
+        regresser.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for index, (inpainted_images, inpainted_ratio) in enumerate(tqdm(val_loader)):
+                images = inpainted_images.view(-1, 3, 224, 224)
+
+                _ = model.get_image_features(pixel_values=images.clone().to(device)).cpu()
+                next_to_last_layer_features = activations['next_to_last_layer'].cpu()
+
+                outputs = regresser(next_to_last_layer_features.to(device)).squeeze()
+                loss = nn.functional.mse_loss(outputs.cpu(), inpainted_ratio.float())
+                val_loss += loss.item()
+
+        val_loss /= len(val_loader)
+        writer.add_scalar('validation loss', val_loss, epoch)
         
-        next_to_last_layer_features = activations['next_to_last_layer'].cpu()
-
-        labels = torch.tensor(batch_classes, dtype=torch.float32).to(device)
-        labels = 2 * labels - 1  # Convert labels from 0/1 to -1/+1
-
-        outputs = regresser(next_to_last_layer_features.to(device)).squeeze()
-
-        loss = torch.mean(torch.clamp(1 - outputs * labels, min=0))
-        writer.add_scalar('training loss', loss, index)
-        if(best_loss > loss):
-            best_loss = loss
-            #best_model = deepcopy(regresser.state_dict())
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        batch_img = []
-        batch_classes = []
 
     # save
     writer.close()
     print("best loss: ",best_loss)
     torch.save(regresser.state_dict(), weights_dir+name+'.pt')
 
-
 if __name__ == "__main__":
     
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--in_csv"     , '-i', type=str, help="The path of the input csv file with the list of images", default="data/commercial_tools.csv")
+    parser.add_argument("--in_csv"     , '-i', type=str, help="The path of the root folder containing both the inpaited and the mask images", default="/media/mmlab/Volume2/")
     parser.add_argument("--weights_dir", '-w', type=str, help="The directory to the networks weights", default="weights/shallow/")
-    parser.add_argument("--N"          , '-n', type=int, help="Size of the training N+N vectors", default=100)
+    parser.add_argument("--N"          , '-n', type=float, help="Size of the training dataset", default=0.8)
     parser.add_argument("--device"     , '-d', type=str, help="Torch device", default='cuda:0')
     parser.add_argument("--layers"     , '-l', type=int, help="Number of layers of the regressor", default=3)
-    parser.add_argument("--learning_rate"     , '-r', type=int, help="Learning rate of the optimizer", default=0.001)
+    parser.add_argument("--learning_rate"     , '-r', type=float, help="Learning rate of the optimizer", default=0.005)
     args = vars(parser.parse_args())
     
     train(args['in_csv'], args['device'], args['N'], args['layers'], args['weights_dir'], args['learning_rate'])
