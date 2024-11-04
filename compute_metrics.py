@@ -47,7 +47,6 @@ if __name__ == "__main__":
     tab_metrics.index.name = args['metrics']
     print(tab_metrics.to_string(float_format=lambda x: '%5.3f'%x))
     
-    if args['save_tab'] is not None:
-        os.makedirs(os.path.dirname(os.path.abspath(args['save_tab'])), exist_ok=True)
-        tab_metrics.to_csv(args['save_tab'])
+    os.makedirs(os.path.dirname(os.path.abspath(args['save_tab'])), exist_ok=True)
+    tab_metrics.to_csv(args['save_tab'])
     
