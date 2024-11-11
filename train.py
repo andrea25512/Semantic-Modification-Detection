@@ -1,47 +1,63 @@
 import torch
-import os
-import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
-from torchvision.models import resnet50, ResNet50_Weights
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from utils.dataset_augmentations import createDataset
 from transformers import CLIPModel
+from networks.shallow import TwoRegressor, ThreeRegressor
+from torch.utils.tensorboard import SummaryWriter
 
 activations = {}
-torch.manual_seed(42)
+seed = 42
+hidde_size = 512
+torch.manual_seed(seed)
 
 def get_activation(name):
     def hook(model, input, output):
         activations[name] = output
     return hook
 
-def train(device, N, batch_size, input_folder):
+def train(input_folder, weights_dir, N, device, layers, learning_rate):
     print(input_folder)
-    dataset = createDataset(input_folder)
+    dataset = createDataset(input_folder, device, train=True)
     train_dataset, test_dataset = random_split(dataset, [N, len(dataset) - N])
     
     print("Training images: ",len(train_dataset)," - Test images: ",len(test_dataset))
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
     model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
     model = model.to(device).eval()
     model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
 
-    regresser = nn.Linear(1024, 1).to(device)
+    regresser = None
+    if(layers == 1):
+        regresser = nn.Linear(1024, 1).to(device)
+    elif(layers == 2):
+        regresser = TwoRegressor(hidde_size).to(device)
+    elif(layers == 3):
+        regresser = ThreeRegressor(hidde_size).to(device)
+    else:
+        print("Only supported from 1 to 3 layers")
+        exit()
 
-    learning_rate = 0.01
-    optimizer = optim.SGD(regresser.parameters(), lr=learning_rate)
+    optimizer = optim.AdamW(regresser.parameters(), lr=learning_rate)
+
+    name = None
+    if(layers == 1):
+        name = '1_layers_'+str(learning_rate)+'_optim_'+str(type(optimizer).__name__)+'_N'+str(N)
+    else:
+        name = f"{layers}_layers_{hidde_size}_ReLU_{learning_rate}_optim_{type(optimizer).__name__}_N{N}_hinge"
+    print("Output name: ",name)
+    writer = SummaryWriter('runs/'+name)
 
     print(flush=True)
 
     ### training
     print("Running the Training")
 
-    for batch_idx, (real_images, synthetic_images) in enumerate(tqdm(train_loader)):
+    for idx, (real_images, synthetic_images, tot_real_entries, tot_fake_entries) in enumerate(tqdm(train_loader)):
         total_images = torch.cat((real_images, synthetic_images), dim=0)
         total_images = total_images.view(-1, 3, 224, 224)
   
@@ -58,33 +74,29 @@ def train(device, N, batch_size, input_folder):
         outputs = regresser(next_to_last_layer_features.to(device)).squeeze()
 
         loss = torch.mean(torch.clamp(1 - outputs * labels, min=0))
+        writer.add_scalar('training loss', loss, idx)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
     # save
-    torch.save(regresser.state_dict(), 'weights/linear_SVM/SVM.pt')
+    writer.close()
+    torch.save(regresser.state_dict(), weights_dir+name+'.pt')
 
 
 if __name__ == "__main__":
     
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--in_folder"     , '-i', type=str, help="The path of the dataset folder with the folders of the images' origin", default="../ClipBased-SyntheticImageDetection/data/synthbuster")
-    parser.add_argument("--out_csv"    , '-o', type=str, help="The path of the output csv file", default="./results.csv")
-    parser.add_argument("--weights_dir", '-w', type=str, help="The directory to the networks weights", default="./weights")
-    parser.add_argument("--models"     , '-m', type=str, help="List of models to test", default='clipdet_latent10k_plus,Corvi2023')
-    parser.add_argument("--N"          , '-n', type=int, help="Size of the training N+N vectors", default=10)
+    parser.add_argument("--in_folder"     , '-i', type=str, help="The path of the dataset folder with the folders of the images' origin", default="../../Baseline/Semantic-Modification-Detection/data/synthbuster")
+    parser.add_argument("--weights_dir", '-w', type=str, help="The directory to the networks weights", default="weights/shallow/")
+    parser.add_argument("--N"          , '-n', type=int, help="Size of the training N+N vectors", default=100)
     parser.add_argument("--device"     , '-d', type=str, help="Torch device", default='cuda:0')
-    parser.add_argument("--batch"          , '-b', type=int, help="Size of the batch duing training and evaluation", default=1)
+    parser.add_argument("--layers"     , '-l', type=int, help="Number of layers of the regressor", default=3)
+    parser.add_argument("--learning_rate"     , '-r', type=float, help="Learning rate of the optimizer", default=0.0005)
     args = vars(parser.parse_args())
     
-    if args['models'] is None:
-        args['models'] = os.listdir(args['weights_dir'])
-    else:
-        args['models'] = args['models'].split(',')
-    
-    train(args['device'], args['N'], args["batch"], args['in_folder'])
+    train(args['in_folder'], args['weights_dir'], args['N'], args['device'], args['layers'], args['learning_rate'])
     
     print("Training completed")

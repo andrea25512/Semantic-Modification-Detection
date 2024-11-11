@@ -120,22 +120,6 @@ augmentations = [
     LightShadowAdjustmentTransform(clip_limit=2.0, grid_size=(8, 8))
 ]
 
-captions = [
-    "Original",
-    "Equalize",
-    "Gaussian",
-    "Median",
-    "Blur",
-    "Resize",
-    "S-Resolut",
-    "Grayscale",
-    "Compres",
-    "Shaprn",
-    "Gamma",
-    "Wht/Drk",
-    "Shadow"
-]
-
 class ImageDataset(datasets.ImageFolder):
     def __init__(self, root, transform = None, augmentations=None, device="cuda:0", train=False):
         super().__init__(root, transform = transform)
@@ -150,6 +134,21 @@ class ImageDataset(datasets.ImageFolder):
             'dalle3',
             'midjourney-v5',
             'firefly'
+        ]
+        self.captions = [
+            "Original",
+            "Equalize",
+            "Gaussian",
+            "Median",
+            "Blur",
+            "Resize",
+            "S-Resolut",
+            "Grayscale",
+            "Compres",
+            "Shaprn",
+            "Gamma",
+            "Wht/Drk",
+            "Shadow"
         ]
 
         self.real_images = [ f for f in os.listdir(self.real_folder) if f.endswith('.png') ]
@@ -170,7 +169,7 @@ class ImageDataset(datasets.ImageFolder):
             for aug in self.augmentations:
                 real_images.append(aug(real_image))
 
-        #show_images_with_captions([img.cpu() for img in real_images],captions)
+        #show_images_with_captions([img.cpu() for img in real_images],self.captions)
 
         if self.transform:
             for i in range(len(real_images)):

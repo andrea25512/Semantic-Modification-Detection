@@ -3,18 +3,20 @@ import pandas
 import numpy as np
 from sklearn import metrics 
 
-
 dict_metrics = {
     'auc' : lambda label, score: metrics.roc_auc_score(label,  score),
     'acc' : lambda label, score: metrics.balanced_accuracy_score(label, score>0),
 }
 
-
 def compute_metrics(input_csv, output_csv, metrics_fun):
     table = pandas.read_csv(output_csv)
+    table = table.drop(columns=['aug'])
     list_algs = [_ for _ in table.columns if _!='filename']
+
     table = pandas.read_csv(input_csv).merge(table, on=['filename', ])
-    assert 'typ' in table
+    
+    assert 'clip' in table
+
     list_typs = sorted([_ for _ in set(table['typ']) if _!='real'])
     table['label'] = table['typ']!='real'
 
@@ -38,7 +40,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--in_csv"  , '-i', type=str, help="The path of the input csv file with the list of images")
-    parser.add_argument("--out_csv" , '-o', type=str, help="The path of the output csv file", default="./results.csv")
+    parser.add_argument("--out_csv" , '-o', type=str, help="The path of the output csv file", default="results.csv")
     parser.add_argument("--metrics" , '-w', type=str, help="type of metrics ('auc' or 'acc')", default="auc")
     parser.add_argument("--save_tab", '-t', type=str, help="The path of the metrics csv file", default=None)
     args = vars(parser.parse_args())
