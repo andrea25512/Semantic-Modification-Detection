@@ -1,19 +1,15 @@
 import torch
 import os
 import pandas
-import numpy as np
 import tqdm
 import torch.nn as nn
 from PIL import Image
 import torch.optim as optim
 import random
-
 from torchvision.transforms  import CenterCrop, Resize, Compose, InterpolationMode
 from utils.processing import make_normalize
-from utils.fusion import apply_fusion
 from transformers import CLIPModel
 from networks.shallow import TwoRegressor, ThreeRegressor
-from copy import deepcopy
 from torch.utils.tensorboard import SummaryWriter
 
 activations = {}
