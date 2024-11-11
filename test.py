@@ -1,21 +1,15 @@
 import torch
 import os
 import pandas
-import numpy as np
 import tqdm
 import torch.nn as nn
 from PIL import Image
-import torch.optim as optim
-import random
 import yaml
 from networks import create_architecture, load_weights
 from torchvision.transforms  import CenterCrop, Resize, Compose, InterpolationMode
 from utils.processing import make_normalize
-from utils.fusion import apply_fusion
 from transformers import CLIPModel
 from networks.shallow import TwoRegressor, ThreeRegressor
-from copy import deepcopy
-import re
 from torch.utils.tensorboard import SummaryWriter
 
 activations = {}
@@ -139,9 +133,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--in_csv"     , '-i', type=str, help="The path of the input csv file with the list of images", default="data/commercial_tools.csv")
-    parser.add_argument("--out_csv"    , '-o', type=str, help="The path of the output csv file", default="./out.csv")
-    parser.add_argument("--weights_dir", '-w', type=str, help="The directory to the networks weights", default="./weights")
-    parser.add_argument("--models"     , '-m', type=str, help="List of models to test", default='clipdet_latent10k_plus')
+    parser.add_argument("--out_csv"    , '-o', type=str, help="The path of the output folder for the csv file", default="predictions/")
     parser.add_argument("--N"          , '-n', type=int, help="Size of the training N+N vectors", default=100)
     parser.add_argument("--device"     , '-d', type=str, help="Torch device", default='cuda:0')
     parser.add_argument("--model_type"     , '-t', type=str, help="Version of the model to be tested", default='original')
@@ -149,7 +141,7 @@ if __name__ == "__main__":
     
     table = test(args['in_csv'], args['device'], args['N'], args['model_type'])
 
-    os.makedirs(os.path.dirname(os.path.abspath("predictions/"+args['model_type']+".csv")), exist_ok=True)
-    table.to_csv("predictions/"+args['model_type']+".csv", index=False)  # save the results as csv file
+    os.makedirs(os.path.dirname(os.path.abspath(args['out_csv']+args['model_type']+".csv")), exist_ok=True)
+    table.to_csv(args['out_csv']+args['model_type']+".csv", index=False)  # save the results as csv file
     
     print("Testing completed")
