@@ -9,7 +9,6 @@ dict_metrics = {
     'acc' : lambda label, score: metrics.balanced_accuracy_score(label, score>0),
 }
 
-
 def compute_metrics(input_csv, output_csv, metrics_fun):
     table = pandas.read_csv(output_csv)
     list_algs = [_ for _ in table.columns if _!='filename']
@@ -43,10 +42,11 @@ if __name__ == "__main__":
     parser.add_argument("--save_tab", '-t', type=str, help="The path of the metrics csv file", default=None)
     args = vars(parser.parse_args())
     
-    tab_metrics = compute_metrics(args['in_csv'], args['out_csv'], dict_metrics[args['metrics']])
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    tab_metrics = compute_metrics(os.path.join(script_dir, args['in_csv']), os.path.join(script_dir, args['out_csv']), dict_metrics[args['metrics']])
     tab_metrics.index.name = args['metrics']
     print(tab_metrics.to_string(float_format=lambda x: '%5.3f'%x))
     
-    os.makedirs(os.path.dirname(os.path.abspath(args['save_tab'])), exist_ok=True)
-    tab_metrics.to_csv(args['save_tab'])
+    tab_metrics.to_csv(os.path.join(script_dir, args['save_tab']))
     
