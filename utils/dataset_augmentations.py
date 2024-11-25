@@ -17,8 +17,69 @@ import kornia.augmentation as K
 import kornia.enhance as E
 import kornia.utils as U
 import kornia.geometry.transform as TR
+import kornia.filters as KF
+import kornia.color as C
 
 U.get_cuda_device_if_available(index=0)
+
+#------------------------------------------------------------------------------------------------------------
+
+class EqualizeTransform:
+    def __init__(self):
+        pass
+
+    def __call__(self, img_tensor):
+        return E.equalize(img_tensor)
+
+class GaussianBlurTransform:
+    def __init__(self, kernel_size_range=(3, 9), sigma_range=(0.1, 2.0), debug=False):
+        self.kernel_size_range = kernel_size_range
+        self.sigma_range = sigma_range
+        self.debug = debug
+
+    def __call__(self, img_tensor):
+        # Ensure kernel size is odd and within the specified range
+        kernel_sizes = [k for k in range(self.kernel_size_range[0], self.kernel_size_range[1]+1, 2)]
+        kernel_size = random.choice(kernel_sizes)
+        sigma = random.uniform(*self.sigma_range)
+        if(self.debug):
+            print(f"GaussianBlurTransform: selected {kernel_size} kernel size out of {kernel_sizes} kernel sizes - selected {sigma} sigma range out of {self.sigma_range} sigma range")
+        return KF.gaussian_blur2d(img_tensor, (kernel_size, kernel_size), (sigma, sigma)).squeeze(0)
+
+class MedianBlurTransform:
+    def __init__(self, kernel_size_range=(3, 5), debug=False):
+        self.kernel_size_range = kernel_size_range
+        self.debug = debug
+
+    def __call__(self, img_tensor):
+        kernel_sizes = [k for k in range(self.kernel_size_range[0], self.kernel_size_range[1]+1, 2)]
+        kernel_size = random.choice(kernel_sizes)
+        if(self.debug):
+            print(f"MedianBlurTransform: selected {kernel_size} kernel size out of {kernel_sizes} kernel sizes")
+        return KF.median_blur(img_tensor, (kernel_size, kernel_size)).squeeze(0)
+
+class BoxBlurTransform:
+    def __init__(self, kernel_size_range=(3, 7), debug=False):
+        self.kernel_size_range = kernel_size_range
+        self.debug = debug
+
+    def __call__(self, img_tensor):
+        kernel_sizes = [k for k in range(self.kernel_size_range[0], self.kernel_size_range[1]+1, 2)]
+        kernel_size = random.choice(kernel_sizes)
+        if(self.debug):
+            print(f"BoxBlurTransform: selected {kernel_size} kernel size out of {kernel_sizes} kernel sizes")
+        return KF.box_blur(img_tensor, (kernel_size, kernel_size)).squeeze(0)
+
+class ResizeTransform:
+    def __init__(self, size_range=(0.3, 0.7), debug=False):
+        self.size_range = size_range
+        self.debug = debug
+
+    def __call__(self, img_tensor):
+        size = random.uniform(*self.size_range)
+        if(self.debug):
+            print(f"ResizeTransform: from {img_tensor.shape[2]}x{img_tensor.shape[3]}--({size})-->{int(img_tensor.shape[2]*size)}x{int(img_tensor.shape[3]*size)} size out of {self.size_range} sizes")
+        return torch.nn.functional.interpolate(img_tensor, size=(int(img_tensor.shape[2]*size), int(img_tensor.shape[3]*size)), mode='bilinear', align_corners=False).squeeze(0)
 
 class SuperResolutionTransform:
     def __init__(self, upscale_factor=3, device='cuda'):
@@ -31,110 +92,118 @@ class SuperResolutionTransform:
             sr_img_tensor = self.model(img_tensor)
         return sr_img_tensor
 
-
-class SuperResolutionTransform:
-    def __init__(self, upscale_factor=3, device='cuda'):
-        self.model = ninasr_b1(pretrained=True, scale=upscale_factor).to(device)
-        self.model.eval()
-        self.device = device
-
-    def __call__(self, img_tensor):
-        with torch.no_grad():
-            sr_img_tensor = self.model(img_tensor.unsqueeze(0))
-        return sr_img_tensor.squeeze(0)
-
 class JPEGCompressionTransform:
-    def __init__(self, quality=100):
-        self.quality = quality
+    def __init__(self, quality_range=(10, 40), debug=False):
+        self.quality_range = quality_range
+        self.debug = debug
 
     def __call__(self, img_tensor):
-        img_tensor = img_tensor.cpu()
-        img_pil = transforms.ToPILImage()(img_tensor)
+        quality = random.randint(*self.quality_range)
+        local_img_tensor = img_tensor.clone().cpu().squeeze(0)
+        img_pil = F.to_pil_image(local_img_tensor)
         with io.BytesIO() as buffer:
-            img_pil.save(buffer, format="JPEG", quality=self.quality)
+            img_pil.save(buffer, format="JPEG", quality=quality)
             buffer.seek(0)
             compressed_img = Image.open(buffer).convert('RGB')
-        compressed_tensor = transforms.ToTensor()(compressed_img).to("cuda:0")
-        return compressed_tensor
+        compressed_tensor = F.to_tensor(compressed_img).to(img_tensor.device)
+        if(self.debug):
+          print(f"JPEGCompressionTransform: selected {quality} quality out of {self.quality_range} qualities")
+        return compressed_tensor.unsqueeze(0)
 
-
-class GammaCorrectionTransform:
-    def __init__(self, gamma=1.0, gain=1.0):
-        self.gamma = gamma
-        self.gain = gain
-
-    def __call__(self, img):
-        if isinstance(img, torch.Tensor):
-            return F.adjust_gamma(img, gamma=self.gamma, gain=self.gain)
-        elif isinstance(img, Image.Image):
-            img_tensor = F.to_tensor(img)
-            img_tensor = F.adjust_gamma(img_tensor, gamma=self.gamma, gain=self.gain)
-            return F.to_pil_image(img_tensor)
-        else:
-            raise TypeError(f"Unsupported image type: {type(img)}")
-
-class WhiteDarkCorrectionTransform:
-    def __init__(self, low_percentile=1, high_percentile=99):
-        self.low_percentile = low_percentile
-        self.high_percentile = high_percentile
+class SharpnessTransform:
+    def __init__(self, sharpness_range=(2.0, 5.0), debug=False):
+        self.sharpness_range = sharpness_range
+        self.debug = debug
 
     def __call__(self, img_tensor):
-        low_val = torch.quantile(img_tensor, self.low_percentile / 100.0)
-        high_val = torch.quantile(img_tensor, self.high_percentile / 100.0)
+        factor = random.uniform(*self.sharpness_range)
+        if(self.debug):
+            print(f"SharpnessTransform: selected {factor} sharpness out of {self.sharpness_range} sharpness ranges")
+        return E.sharpness(img_tensor, factor)
 
+class GammaTransform:
+    def __init__(self, gamma_range=(0.7, 1.5), gain_range=(0.7, 1.5), debug=False):
+        self.gamma_range = gamma_range
+        self.gain_range = gain_range
+        self.debug = debug
+
+    def __call__(self, img_tensor):
+        gamma = random.uniform(*self.gamma_range)
+        gain = random.uniform(*self.gain_range)
+        if(self.debug):
+            print(f"GammaTransform: selected {gamma} gamma out of {self.gamma_range} gamma ranges - selected {gain} gain out of {self.gain_range} gain ranges")
+        return E.adjust_gamma(img_tensor, gamma=gamma, gain=gain)
+
+class WhiteDarkCorrectionTransform:
+    def __init__(self, low_percentile_range=(10, 30), high_percentile_range=(70, 90), debug=False):
+        self.low_percentile_range = low_percentile_range
+        self.high_percentile_range = high_percentile_range
+        self.debug = debug
+
+    def __call__(self, img_tensor):
+        low_percentile = random.uniform(*self.low_percentile_range)
+        high_percentile = random.uniform(*self.high_percentile_range)
+        low_val = torch.quantile(img_tensor, low_percentile / 100.0)
+        high_val = torch.quantile(img_tensor, high_percentile / 100.0)
         img_tensor = torch.clamp(img_tensor, min=low_val, max=high_val)
-        img_tensor = (img_tensor - low_val) / (high_val - low_val) 
-
+        img_tensor = (img_tensor - low_val) / (high_val - low_val + 1e-8)
+        if(self.debug):
+            print(f"WhiteDarkCorrectionTransform: selected {low_percentile} low percentile out of {self.low_percentile_range} low percentile range - selected {high_percentile} high percentile out of {self.high_percentile_range} high percentile range")
         return img_tensor
 
 class LightShadowAdjustmentTransform:
-    def __init__(self, clip_limit=2.0, grid_size=(8, 8)):
-        self.clip_limit = clip_limit
-        self.grid_size = grid_size
+    def __init__(self, clip_limit_range=(1.0, 4.0), grid_size_options=[(4, 4), (8, 8), (16, 16)], debug=False):
+        self.clip_limit_range = clip_limit_range
+        self.grid_size_options = grid_size_options
+        self.debug = debug
 
     def __call__(self, img_tensor):
-        # Ensure the image is in the range [0, 1]
         img_tensor = torch.clamp(img_tensor, 0.0, 1.0)
-
-        # Apply CLAHE
+        clip_limit = random.uniform(*self.clip_limit_range)
+        grid_size = random.choice(self.grid_size_options)
         img_clahe = E.equalize_clahe(
-            img_tensor, 
-            clip_limit=self.clip_limit, 
-            grid_size=self.grid_size, 
+            img_tensor.unsqueeze(0),
+            clip_limit=clip_limit,
+            grid_size=grid_size,
             slow_and_differentiable=False
-        )
+        ).squeeze(0)
+        if(self.debug):
+            print(f"WhiteDarkCorrectionTransform: selected {clip_limit} clip limit out of {self.clip_limit_range} clip limit range - selected {grid_size} grid size out of {self.grid_size_options} grid size options")
         return img_clahe
 
-augmentations = [
-    K.RandomEqualize(p=1.0),
-    K.RandomGaussianBlur(kernel_size=(9, 9), sigma=(0.1, 2.0), p=1.0),
-    K.RandomMedianBlur((9, 9), p=1.0),
-    K.RandomBoxBlur((9, 9), p=1.0),
-    K.Resize(size=(144,144), p=1.0),
-    SuperResolutionTransform(upscale_factor=3),
-    K.RandomGrayscale(p=1.0),
-    JPEGCompressionTransform(quality=5),
-    K.RandomSharpness(sharpness=1,p=1.0),
-    K.RandomGamma(gamma=(1.5, 1.5), gain=(1.5, 1.5), p=1.0),
-    WhiteDarkCorrectionTransform(low_percentile=10, high_percentile=90),
-    LightShadowAdjustmentTransform(clip_limit=2.0, grid_size=(8, 8))
-]
+#------------------------------------------------------------------------------------------------------------
 
 class ImageDataset(datasets.ImageFolder):
-    def __init__(self, root, transform = None, augmentations=None, device="cuda:0", train=False):
+    def __init__(self, root, transform = None, device="cuda:0", train=False, debug=False):
         super().__init__(root, transform = transform)
-        self.augmentations = augmentations
         self.imgs = self.samples  
         self.real_folder = os.path.join(root, 'real_RAISE_1k')
         self.root = root
         self.device = device
         self.train = train
+
         self.synthetic_folders = [
             'dalle2',
             'dalle3',
             'midjourney-v5',
             'firefly'
         ]
+
+        self.augmentations = [
+            EqualizeTransform(),
+            GaussianBlurTransform(debug=debug),
+            MedianBlurTransform(debug=debug),
+            BoxBlurTransform(debug=debug),
+            ResizeTransform(debug=debug),
+            SuperResolutionTransform(device=device),
+            K.RandomGrayscale(p=1.0),
+            JPEGCompressionTransform(debug=debug),
+            SharpnessTransform(debug=debug),
+            GammaTransform(debug=debug),
+            WhiteDarkCorrectionTransform(debug=debug),
+            LightShadowAdjustmentTransform(debug=debug)
+        ]
+
         self.captions = [
             "Original",
             "Equalize",
@@ -161,7 +230,7 @@ class ImageDataset(datasets.ImageFolder):
         real_image_path = os.path.join(self.real_folder, real_image_name)
 
         real_image = Image.open(real_image_path).convert('RGB')
-        real_image = transforms.ToTensor()(real_image).to(self.device)
+        real_image = transforms.ToTensor()(real_image).to(self.device).unsqueeze(0)
         real_images = [real_image]
         tot_real_entries = []
 
@@ -188,7 +257,7 @@ class ImageDataset(datasets.ImageFolder):
             synthetic_image_path = os.path.join(synthetic_folder, real_image_name)
 
             synthetic_image = Image.open(synthetic_image_path).convert('RGB')
-            synthetic_image = transforms.ToTensor()(synthetic_image).to(self.device)
+            synthetic_image = transforms.ToTensor()(synthetic_image).to(self.device).unsqueeze(0)
             synthetic_images = [synthetic_image]
                                                                                                             
             if self.augmentations:
@@ -203,15 +272,15 @@ class ImageDataset(datasets.ImageFolder):
 
         return torch.stack(real_images), tot_synthetic_images, tot_real_entries, tot_fake_entries
 
-def createDataset(rootdataset, device="cuda:0", train=False):
+def createDataset(rootdataset, device="cuda:0", train=False, debug=False):
     transform = torch.nn.Sequential(TR.Resize((224, 224), interpolation='bicubic'),
                                         K.CenterCrop((224, 224)),
                                         E.Normalize(mean=(0.48145466, 0.4578275, 0.40821073),std=(0.26862954, 0.26130258, 0.27577711)))
-    dataset = ImageDataset(root=rootdataset, transform=transform, augmentations=augmentations, device=device, train=train)
+    dataset = ImageDataset(root=rootdataset, transform=transform, device=device, train=train, debug=debug)
 
     return dataset
 
-#-----------------------
+#------------------------------------------------------------------------------------------------------------
 
 def show_images_with_captions(images, captions, nrow=4):
     import matplotlib.pyplot as plt
