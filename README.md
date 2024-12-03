@@ -1,18 +1,21 @@
-## Test Code
-Before using the code, download the weights:
+## Training
+The `train.py` is utilized to train different possible configurations of classifiers.
+First a selection of the possible feature extractor can be performed
 
-```
-git lfs pull
-```
+	* CLIP
+ 	* LongCLIP
+ 	* LLM2CLIP
 
-The `main.py` script requires as input a CSV file with the list of images to analyze.
-The input CSV file must have a 'filename' column with the path to the images.
-The code outputs a CSV file with the LLR score for each image.
-If LLR>0, the image is detected as synthetic.
+Then it can also be selected the lenght of the shallow model, from 1 to 5 layers, other than the common training parameters like Learning Rate and so on
+The code will output a .pt file with the weights of the trained shallow network
 
-The `compute_metrics.py` script can be used to evaluate metrics.
-In this case, the input CSV file must also include the 'typ' column with a value equal to 'real' for real images.
+## Testing
+The `test.py` is utilized to test different possible configurations of classifiers, as it accepts a .pt file with a specific nomenclature. 
+The code will output a .csv file with the predictions of the test set
 
+## Metrics
+The `compute_metrics.py` script can be used to evaluate metrics, and it accepts a .csv file with evaluations.
+It will generate a AUC metric in its standard configuration.
 
 ### Script 
 In order to use the script the follwing packages should be installed:
@@ -28,24 +31,45 @@ In order to use the script the follwing packages should be installed:
 	* huggingface-hub>=0.23.0
 	* open_clip_torch
 
+
+
+The train can be executed as follows:
+
+```
+python train.py --in_csv data/commercial_tools.csv --weights_dir weights/shallow/ --N 100 --device 'cuda:0' --layers 3 --learning_rate 0.005 --version 'LLM2CLIP' --training_mode 'SD'
+```
+The `SD` str parameter is utilized for selecting a training on:
+
+	* real_RAISE_1k dataset for REAL images
+ 	* StableDiffusion dataset for SYNTHETIC images 
+
+And a testing on:
+	
+ 	* FORLAB dataset for REAL images
+  	* dalle2, dalle3, firefly, midjourney-v5 datasets for SYNTHETIC images
+
+Thus permitting to evaluate a shift in the distribution bethween the training and testing data
+Setting this str parameter to anything else will instead fallback the configuration of the training to the old configuration: 
+
+	* real_RAISE_1k dataset for REAL images
+ 	* dalle2, dalle3, firefly, midjourney-v5 datasets for SYNTHETIC images 
+
+And a testing on:
+
+	* real_RAISE_1k dataset for REAL images
+ 	* dalle2, dalle3, firefly, midjourney-v5 datasets for SYNTHETIC images 
+
+Thus, even if there is a split in the dataset for training and testing data, the distribution shift of changing datasets is not present this way
+  
+
 The test can be executed as follows:
 
 ```
-python main.py --in_csv /path/input/csv --out_csv /path/output/csv --device 'cuda:0'
+python test.py --in_csv data/commercial_tools.csv --out_csv predictions/LongClip_1_layers_0.01_optim_AdamW_N100.csv --N 100 --device 'cuda:0' --model_type 'original' --test_mode 'FORLAB'
 ```
 
-To get the results on Commercial Tools generators:
-1) Firstly, download the synthbuster dataset using the following command:
-```
-cd data; bash synthbuster_download.sh; cd ..
-```
+The metrics computation can be executed as follows:
 
-2) Then, run the `new_main.py` script as follows: 
 ```
-python new_main.py --in_csv data/commercial_tools.csv --out_csv out.csv --device 'cuda:0'
-```
-
-3) Finally, calculate the AUC metrics:
-```
-python compute_metrics.py --in_csv data/commercial_tools.csv --out_csv out.csv --metrics auc --save_tab auc_table.csv
+python compute_metrics.py --in_csv data/commercial_tools.csv --out_csv predictions/LongClip_1_layers_0.01_optim_AdamW_N100.csv --metrics 'auc' --save_tab 'performances/LongClip_1_layers_0.01_optim_AdamW_N100.csv'
 ```
