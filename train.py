@@ -26,7 +26,7 @@ def get_activation(name):
         activations[name] = output
     return hook
 
-def train(input_csv, device, N, layers, weights_dir, learning_rate, version, batch_size = 1):
+def train(input_csv, device, N, layers, weights_dir, learning_rate, version, training_mode, batch_size = 1):
     torch.manual_seed(seed)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     rootdataset = os.path.join(script_dir,input_csv)
@@ -34,7 +34,7 @@ def train(input_csv, device, N, layers, weights_dir, learning_rate, version, bat
     table = pandas.read_csv(rootdataset)
     real_sample_indices = table.iloc[-1000:].sample(n=N, random_state=seed).index
     random.seed(seed)
-    real_sample = table.loc[real_sample_indices].reset_index(drop=True)
+    real_samples = table.loc[real_sample_indices].reset_index(drop=True)
 
     if(version == "classic"):
         model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
@@ -90,10 +90,14 @@ def train(input_csv, device, N, layers, weights_dir, learning_rate, version, bat
     elif(version == "long"):
         name += "LongClip_"
 
+    tmp = ""
+    if(training_mode == "SD"):
+        tmp = "dataset_SD_"
+
     if(layers == 1):
-        name += '1_layers_'+str(learning_rate)+'_optim_'+str(type(optimizer).__name__)+'_N'+str(N)
+        name += f"1_layers_{tmp}{learning_rate}_optim_{type(optimizer).__name__}_N{N}"
     else:
-        name += str(layers)+'_layers_'+str(hidde_size)+'_ReLU_'+str(learning_rate)+'_optim_'+str(type(optimizer).__name__)+'_N'+str(N)
+        name += f"{layers}_layers_{tmp}{hidde_size}_ReLU_{learning_rate}_optim_{type(optimizer).__name__}_N{N}"
     print("Output name: ",name)
     writer = SummaryWriter('runs/'+name)
 
@@ -103,10 +107,15 @@ def train(input_csv, device, N, layers, weights_dir, learning_rate, version, bat
     batch_classes = []
     best_loss = float('inf')
     #best_model = None
-    for index in tqdm.tqdm(range(len(real_sample))):
-        real_filename = os.path.join(data_folder, real_sample.loc[index, 'filename'])
-        synthetic_choice = random.choice(["dalle2", "dalle3", "firefly", "midjourney-v5"])
-        synthetic_filename = os.path.join(data_folder, "synthbuster/"+synthetic_choice+"/"+real_sample.loc[index, 'filename'].split('/')[-1])
+    for index in tqdm.tqdm(range(len(real_samples))):
+        real_filename = os.path.join(data_folder, real_samples.loc[index, 'filename'])
+        
+        if(training_mode == "SD"):
+            synthetic_filename = os.path.join("/media/mmlab/Datasets_4TB/ceron_train/StableDiffusion35/no_PP/"+f"{index:05}.png")
+        else:
+            synthetic_choice = random.choice(["dalle2", "dalle3", "firefly", "midjourney-v5"])
+            synthetic_filename = os.path.join(data_folder, "synthbuster/"+synthetic_choice+"/"+real_samples.loc[index, 'filename'].split('/')[-1])
+        
         batch_img.append(transform(Image.open(real_filename).convert('RGB')))
         batch_classes.append(0)
         batch_img.append(transform(Image.open(synthetic_filename).convert('RGB')))
@@ -162,14 +171,16 @@ if __name__ == "__main__":
     parser.add_argument("--layers"     , '-l', type=int, help="Number of layers of the regressor", default=4)
     parser.add_argument("--learning_rate"     , '-r', type=float, help="Learning rate of the optimizer", default=0.0005)
     parser.add_argument("--version"     , '-v', type=str, help="Version of the feature extractor", default='LLM2CLIP')
+    parser.add_argument("--training_mode"     , '-t', type=str, help="RAISE1k with StableDiffusion or the previous version", default="SD")
+
     args = vars(parser.parse_args())
     
-    name = train(args['in_csv'], args['device'], args['N'], args['layers'], args['weights_dir'], args['learning_rate'], args['version'])
+    name = train(args['in_csv'], args['device'], args['N'], args['layers'], args['weights_dir'], args['learning_rate'], args['version'], args['training_mode'])
     
     print("Training completed")
-
+    
     # Define the parameters to pass
-    params = ["--model_type", name, "--N", str(args['N']), "--out_csv", f"{name}.csv"]
+    params = ["--model_type", name, "--N", str(args['N']), "--out_csv", f"{name}.csv", "--test_mode", "FORLAB", "--device", args['device']]
 
     # Construct the command
     command = ["python3", os.path.join(os.path.dirname(os.path.abspath(__file__)),"test.py")] + params
@@ -194,3 +205,5 @@ if __name__ == "__main__":
             os.close(master_fd)
         except OSError:
             pass
+            
+    

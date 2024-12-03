@@ -15,6 +15,7 @@ from transformers import CLIPImageProcessor
 import sys
 from LongCLIP.model import longclip
 import subprocess
+import random
 
 activations = {}
 seed = 42
@@ -31,15 +32,20 @@ def get_config(model_name, weights_dir='./weights'):
     model_path = os.path.join(weights_dir, model_name, data['weights_file'])
     return data['model_name'], model_path, data['arch'], data['norm_type'], data['patch_size']
 
-def test(input_csv, device, N, model_type, batch_size = 1):
+def test(input_csv, device, N, model_type, test_mode, batch_size = 1):
     torch.manual_seed(seed)
+    random.seed(seed)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     rootdataset = os.path.join(script_dir,input_csv)
-    data_folder = os.path.dirname(os.path.abspath(rootdataset))
+    RAISE_data_folder = os.path.dirname(os.path.abspath(rootdataset))
     table = pandas.read_csv(rootdataset)
     train_real_sample_indices = table.iloc[-1000:].sample(n=N, random_state=seed).index
     test_real_sample_indices = table.iloc[-1000:].index.difference(train_real_sample_indices)
-    real_sample = table.loc[test_real_sample_indices].reset_index(drop=True)
+    RAISE_real_samples = table.loc[test_real_sample_indices].reset_index(drop=True)
+
+    if(test_mode == "FORLAB"):
+        FORLAB_real_samples = [f for f in os.listdir("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB") if os.path.isfile(os.path.join("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB", f))]
+        random.shuffle(FORLAB_real_samples)
 
     model = None
     regresser = None
@@ -157,12 +163,16 @@ def test(input_csv, device, N, model_type, batch_size = 1):
     batch_img = []
     batch_classes = []
     with torch.no_grad():
-        for index in tqdm.tqdm(range(len(real_sample)), dynamic_ncols=True, file=sys.stderr):
-            real_filename = os.path.join(data_folder, real_sample.loc[index, 'filename'])
-            synthetic_filename1 = os.path.join(data_folder, "synthbuster/dalle2/"+real_sample.loc[index, 'filename'].split('/')[-1])
-            synthetic_filename2 = os.path.join(data_folder, "synthbuster/dalle3/"+real_sample.loc[index, 'filename'].split('/')[-1])
-            synthetic_filename3 = os.path.join(data_folder, "synthbuster/firefly/"+real_sample.loc[index, 'filename'].split('/')[-1])
-            synthetic_filename4 = os.path.join(data_folder, "synthbuster/midjourney-v5/"+real_sample.loc[index, 'filename'].split('/')[-1])
+        for index in tqdm.tqdm(range(len(RAISE_real_samples)), dynamic_ncols=True, file=sys.stderr):
+            if(test_mode == "FORLAB"):
+                real_filename = os.path.join("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB", FORLAB_real_samples[index])
+            else:
+                real_filename = os.path.join(RAISE_data_folder, RAISE_real_samples.loc[index, 'filename'])
+
+            synthetic_filename1 = os.path.join(RAISE_data_folder, "synthbuster/dalle2/"+RAISE_real_samples.loc[index, 'filename'].split('/')[-1])
+            synthetic_filename2 = os.path.join(RAISE_data_folder, "synthbuster/dalle3/"+RAISE_real_samples.loc[index, 'filename'].split('/')[-1])
+            synthetic_filename3 = os.path.join(RAISE_data_folder, "synthbuster/firefly/"+RAISE_real_samples.loc[index, 'filename'].split('/')[-1])
+            synthetic_filename4 = os.path.join(RAISE_data_folder, "synthbuster/midjourney-v5/"+RAISE_real_samples.loc[index, 'filename'].split('/')[-1])
             batch_img.append(transform(Image.open(real_filename).convert('RGB')))
             batch_classes.append(0)
             batch_img.append(transform(Image.open(synthetic_filename1).convert('RGB')))
@@ -195,7 +205,7 @@ def test(input_csv, device, N, model_type, batch_size = 1):
                 next_to_last_layer_features = activations['next_to_last_layer']
                 outputs = regresser(next_to_last_layer_features.float()).squeeze().cpu().numpy()
 
-            for ii, logit in zip([real_sample.loc[index, 'filename'],"synthbuster/dalle2/"+real_sample.loc[index, 'filename'].split('/')[-1],"synthbuster/dalle3/"+real_sample.loc[index, 'filename'].split('/')[-1],"synthbuster/firefly/"+real_sample.loc[index, 'filename'].split('/')[-1],"synthbuster/midjourney-v5/"+real_sample.loc[index, 'filename'].split('/')[-1]], outputs):
+            for ii, logit in zip([RAISE_real_samples.loc[index, 'filename'],"synthbuster/dalle2/"+RAISE_real_samples.loc[index, 'filename'].split('/')[-1],"synthbuster/dalle3/"+RAISE_real_samples.loc[index, 'filename'].split('/')[-1],"synthbuster/firefly/"+RAISE_real_samples.loc[index, 'filename'].split('/')[-1],"synthbuster/midjourney-v5/"+RAISE_real_samples.loc[index, 'filename'].split('/')[-1]], outputs):
                 entry = pandas.DataFrame.from_dict({
                     "filename": [ii],
                     "clip":  [logit]
@@ -217,10 +227,11 @@ if __name__ == "__main__":
     parser.add_argument("--out_csv"    , '-o', type=str, help="The path of the output csv file", default="LongClip_1_layers_0.01_optim_AdamW_N100.csv")
     parser.add_argument("--N"          , '-n', type=int, help="Size of the training N+N vectors", default=100)
     parser.add_argument("--device"     , '-d', type=str, help="Torch device", default='cuda:0')
-    parser.add_argument("--model_type"     , '-t', type=str, help="Version of the model to be tested", default='original')
+    parser.add_argument("--model_type"     , '-m', type=str, help="Version of the model to be tested", default='original')
+    parser.add_argument("--test_mode"     , '-t', type=str, help="RAISE1k or FORLAB as the real images to test with", default='FORLAB')
     args = vars(parser.parse_args())
     
-    table = test(args['in_csv'], args['device'], args['N'], args['model_type'])
+    table = test(args['in_csv'], args['device'], args['N'], args['model_type'], args['test_mode'])
 
     table.to_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "predictions/"+args['out_csv']), index=False)  # save the results as csv file
     
