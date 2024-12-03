@@ -1,15 +1,9 @@
-from torchvision import datasets
 from torchvision import transforms
-from . import processing
+from torch.utils.data import Dataset
 import os
 from PIL import Image
 import random
-import cv2
-import numpy as np
-import torch.nn as nn
-from torchvision.transforms import v2
 from torchsr.models import ninasr_b1
-from torchvision import transforms as T
 import torchvision.transforms.functional as F
 import torch
 import io
@@ -18,7 +12,7 @@ import kornia.enhance as E
 import kornia.utils as U
 import kornia.geometry.transform as TR
 import kornia.filters as KF
-import kornia.color as C
+import pandas
 
 U.get_cuda_device_if_available(index=0)
 
@@ -173,14 +167,18 @@ class LightShadowAdjustmentTransform:
 
 #------------------------------------------------------------------------------------------------------------
 
-class ImageDataset(datasets.ImageFolder):
-    def __init__(self, root, transform = None, device="cuda:0", train=False, debug=False):
-        super().__init__(root, transform = transform)
-        self.imgs = self.samples  
-        self.real_folder = os.path.join(root, 'real_RAISE_1k')
+class ImageDataset(Dataset):
+    def __init__(self, root, transform = None, device="cuda:0", train=False, debug=False, training_mode="SD", N=100, seed=42):
+        super().__init__()
+        torch.manual_seed(seed)
+        random.seed(seed)
+        
         self.root = root
+        self.transform = transform
         self.device = device
         self.train = train
+        self.training_mode = training_mode
+        self.StableDiffusion_index = 0
 
         self.synthetic_folders = [
             'dalle2',
@@ -219,18 +217,52 @@ class ImageDataset(datasets.ImageFolder):
             "Wht/Drk",
             "Shadow"
         ]
+        table = pandas.read_csv(self.root)
+        sample = table.iloc[-1000:].sample(n=N, random_state=seed).index
+        if(not train):
+            sample = table.iloc[-1000:].index.difference(sample)
+        self.RAISE_real_images = table.loc[sample].reset_index(drop=True)
 
-        self.real_images = [ f for f in os.listdir(self.real_folder) if f.endswith('.png') ]
+        self.FORLAB_real_samples = [f for f in os.listdir("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB") if os.path.isfile(os.path.join("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB", f))]
+        random.shuffle(self.FORLAB_real_samples)
 
     def __len__(self):
-        return len(self.real_images)
+        return len(self.RAISE_real_images)
 
     def __getitem__(self, index):
-        real_image_name = self.real_images[index]
-        real_image_path = os.path.join(self.real_folder, real_image_name)
+        real_image_name = self.RAISE_real_images.loc[index]["filename"].split("/")[-1]
+        
+        if(self.train or (not self.train and not self.training_mode=="SD")):
+            # to the right of the OR is the fallback to the original version, so when self.train=False and training_mode!=SD
+            # thus we have both training and testing that are done with real_RAISE_1k
+            real_image_path = os.path.join(os.path.dirname(os.path.abspath(self.root)), f"synthbuster/real_RAISE_1k/{real_image_name}")
+        else:
+            # we need to train with real_RAISE_1k + Stable diffusion
+            # we need to test FORLAB + four syntetic variants
+            real_image_path = os.path.join("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB", self.FORLAB_real_samples[index])
 
+        # the real_image_name does not change if we are having real_RAISE_1k or FORLAB, because the "commercial_tools.csv" utilized by the evaluation script only has tghe entries for the real_RAISE_1k
+        # thus we pass real_RAISE_1k or FORLAB to the model, but the output logits will be saved only under real_RAISE_1k's name
+        # we can distinguish if the real_RAISE_1k or FORLAB were utilized not by the entries name, but from the file name only
         real_image = Image.open(real_image_path).convert('RGB')
         real_image = transforms.ToTensor()(real_image).to(self.device).unsqueeze(0)
+        
+        # with too mutch high resolution images we have the RuntimeError: quantile() input tensor is too large error
+        # resizing the image is not a problem, after all the biggest input resolution currently is 336x336
+        _, _, height, width = real_image.shape
+        if height > 1000 or width > 1000:
+            aspect_ratio = width / height
+            if width > height:
+                new_width = 1000
+                new_height = int(new_width / aspect_ratio)
+            else:
+                new_height = 1000
+                new_width = int(new_height * aspect_ratio)
+
+        # perform the resize
+        resize = TR.Resize((new_height, new_width))
+        real_image = resize(real_image)
+        
         real_images = [real_image]
         tot_real_entries = []
 
@@ -243,6 +275,7 @@ class ImageDataset(datasets.ImageFolder):
         if self.transform:
             for i in range(len(real_images)):
                 real_images[i] = self.transform(real_images[i])
+                # as written earlier, we save all of the logits under the real_RAISE_1k for retro-compatibility with the original evaluation script
                 tot_real_entries.append("synthbuster/real_RAISE_1k/"+real_image_name)
 
         tot_synthetic_images = torch.Tensor([]).to(self.device)
@@ -252,32 +285,48 @@ class ImageDataset(datasets.ImageFolder):
         if(self.train):
             tmp = [random.choice(tmp)]
 
-        for synthetic_type in tmp:
-            synthetic_folder = os.path.join(self.root, synthetic_type)
-            synthetic_image_path = os.path.join(synthetic_folder, real_image_name)
-
+        if(self.train and self.training_mode=="SD"):
+            # we need to train with real_RAISE_1k + Stable diffusion, if the old version of the code is utilized then the right part of the AND will make the code jump to the 4 syntetic versions isntead of returning SD images
+            # we need to test FORLAB + four syntetic variants
+            synthetic_image_path = os.path.join("/media/mmlab/Datasets_4TB/ceron_train/StableDiffusion35/no_PP/"+f"{self.StableDiffusion_index:05}.png")
+            self.StableDiffusion_index = self.StableDiffusion_index + 1
             synthetic_image = Image.open(synthetic_image_path).convert('RGB')
             synthetic_image = transforms.ToTensor()(synthetic_image).to(self.device).unsqueeze(0)
             synthetic_images = [synthetic_image]
-                                                                                                            
+
             if self.augmentations:
                 for aug in self.augmentations:
                     synthetic_images.append(aug(synthetic_image))
             if self.transform:
                 for i in range(len(synthetic_images)):
                     synthetic_images[i] = self.transform(synthetic_images[i])
-                    tot_fake_entries.append("synthbuster/"+synthetic_type+"/"+real_image_name)
-
+                    # not utilized during training, but still maintained for debug purposes
+                    tot_fake_entries.append(f"StableDiffusion35/no_PP/{index:05}.png")
+            
             tot_synthetic_images = torch.cat((tot_synthetic_images, torch.stack(synthetic_images)), dim=0)
+        else:
+            for synthetic_type in tmp:
+                synthetic_folder = os.path.join(os.path.dirname(os.path.abspath(self.root)), f"synthbuster/{synthetic_type}")
+                synthetic_image_path = os.path.join(synthetic_folder, real_image_name)
+
+                synthetic_image = Image.open(synthetic_image_path).convert('RGB')
+                synthetic_image = transforms.ToTensor()(synthetic_image).to(self.device).unsqueeze(0)
+                synthetic_images = [synthetic_image]
+                                                                                                                
+                if self.augmentations:
+                    for aug in self.augmentations:
+                        synthetic_images.append(aug(synthetic_image))
+                if self.transform:
+                    for i in range(len(synthetic_images)):
+                        synthetic_images[i] = self.transform(synthetic_images[i])
+                        tot_fake_entries.append("synthbuster/"+synthetic_type+"/"+real_image_name)
+
+                tot_synthetic_images = torch.cat((tot_synthetic_images, torch.stack(synthetic_images)), dim=0)
 
         return torch.stack(real_images), tot_synthetic_images, tot_real_entries, tot_fake_entries
 
-def createDataset(rootdataset, device="cuda:0", train=False, debug=False):
-    transform = torch.nn.Sequential(TR.Resize((224, 224), interpolation='bicubic'),
-                                        K.CenterCrop((224, 224)),
-                                        E.Normalize(mean=(0.48145466, 0.4578275, 0.40821073),std=(0.26862954, 0.26130258, 0.27577711)))
-    dataset = ImageDataset(root=rootdataset, transform=transform, device=device, train=train, debug=debug)
-
+def createDataset(rootdataset, transform, device="cuda:0", train=False, debug=False, training_mode="SD", N=100, seed=42):
+    dataset = ImageDataset(root=rootdataset, transform=transform, device=device, train=train, debug=debug, training_mode=training_mode, N=N, seed=seed)
     return dataset
 
 #------------------------------------------------------------------------------------------------------------
@@ -298,4 +347,4 @@ def show_images_with_captions(images, captions, nrow=4):
         axes[i].set_title(caption)
         axes[i].axis('off') 
 
-    fig.savefig("real.png")
+    fig.savefig("real2.png")
