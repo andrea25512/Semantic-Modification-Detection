@@ -26,7 +26,7 @@ def get_activation(name):
         activations[name] = output
     return hook
 
-def train(input_csv, device, N, layers, weights_dir, learning_rate, version, training_mode, batch_size = 1):
+def train(input_csv, device, N, layers, weights_dir, learning_rate, version, training_mode, augmentations, batch_size = 1):
     torch.manual_seed(seed)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     rootdataset = os.path.join(script_dir,input_csv)
@@ -57,9 +57,15 @@ def train(input_csv, device, N, layers, weights_dir, learning_rate, version, tra
         print('input resize:', '224x224', flush=True)
     print(flush=True)
 
-    dataset = createDataset(rootdataset, transform, device, True, False, training_mode, N, seed)
+    if(augmentations == 1):
+        do_aug = True
+    else:
+        do_aug = False
+    print("Augmentation seleceted: ", do_aug)
+
+    dataset = createDataset(rootdataset, transform, device, True, False, training_mode, N, seed, do_aug)
     
-    print("Training images: ",len(dataset))
+    print("Training images: ", len(dataset))
 
     train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
@@ -156,9 +162,10 @@ if __name__ == "__main__":
     parser.add_argument("--learning_rate"     , '-r', type=float, help="Learning rate of the optimizer", default=0.005)
     parser.add_argument("--version"     , '-v', type=str, help="Version of the feature extractor", default='classic')
     parser.add_argument("--training_mode"     , '-t', type=str, help="RAISE1k with StableDiffusion or the previous version", default="SD")
+    parser.add_argument("--augmentations"     , '-a', type=int, help="If apply or not augmentations to images", default=1)
     args = vars(parser.parse_args())
     
-    name = train(args['in_csv'], args['device'], args['N'], args['layers'], args['weights_dir'], args['learning_rate'], args['version'], args['training_mode'])
+    name = train(args['in_csv'], args['device'], args['N'], args['layers'], args['weights_dir'], args['learning_rate'], args['version'], args['training_mode'], args['augmentations'])
 
     print("Training completed")
 

@@ -44,12 +44,12 @@ if __name__ == "__main__":
     parser.add_argument("--metrics" , '-w', type=str, help="type of metrics ('auc' or 'acc')", default="auc")
     parser.add_argument("--save_tab", '-t', type=str, help="The path of the metrics csv file", default=None)
     args = vars(parser.parse_args())
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    tab_metrics = compute_metrics(args['in_csv'], args['out_csv'], dict_metrics[args['metrics']])
+    tab_metrics = compute_metrics(os.path.join(script_dir, args['in_csv']), os.path.join(script_dir, args['out_csv']), dict_metrics[args['metrics']])
     tab_metrics.index.name = args['metrics']
     print(tab_metrics.to_string(float_format=lambda x: '%5.3f'%x))
     
-    if args['save_tab'] is not None:
-        os.makedirs(os.path.dirname(os.path.abspath(args['save_tab'])), exist_ok=True)
-        tab_metrics.to_csv(args['save_tab'])
+    tab_metrics.to_csv(os.path.join(script_dir, args['save_tab']))
     

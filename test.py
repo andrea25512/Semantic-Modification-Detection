@@ -34,7 +34,7 @@ def get_config(model_name, weights_dir='./weights'):
     model_path = os.path.join(weights_dir, model_name, data['weights_file'])
     return data['model_name'], model_path, data['arch'], data['norm_type'], data['patch_size']
 
-def test(input_csv, device, N, model_type, test_mode, batch_size = 1):
+def test(input_csv, device, N, model_type, test_mode, augmentations, batch_size = 1):
     torch.manual_seed(seed)
     random.seed(seed)
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -46,35 +46,35 @@ def test(input_csv, device, N, model_type, test_mode, batch_size = 1):
 
     model = None
     regresser = None
-    if(model_type[0] == '1'):
+    if("1_layers" in model_type):
         print("Linear SVM")
         model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         model = model.to(device).eval()
         model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
         regresser = nn.Linear(1024, 1).to(device)
         regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
-    elif(model_type[0] == '2'):
+    elif("2_layers" in model_type):
         print("Two layers shallow network")
         model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         model = model.to(device).eval()
         model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
         regresser = TwoRegressor(1024, hidden_size).to(device)
         regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
-    elif(model_type[0] == '3'):
+    elif("3_layers" in model_type):
         print("Three layers shallow network")
         model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         model = model.to(device).eval()
         model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
         regresser = ThreeRegressor(1024, hidden_size).to(device)
         regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
-    elif(model_type[0] == '4'):
+    elif("4_layers" in model_type):
         print("Four layers shallow network")
         model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         model = model.to(device).eval()
         model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
         regresser = FourRegressor(1024, hidden_size).to(device)
         regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
-    elif(model_type[0] == '5'):
+    elif("5_layers" in model_type):
         print("Five layers shallow network")
         model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         model = model.to(device).eval()
@@ -82,52 +82,52 @@ def test(input_csv, device, N, model_type, test_mode, batch_size = 1):
         regresser = FiveRegressor(1024, hidden_size).to(device)
         regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
     elif(model_type == "original"):
-        print("LLM2CLIP network")
+        print("original network")
         _, model_path, arch, norm_type, patch_size = get_config("clipdet_latent10k", weights_dir=os.path.join(script_dir,"weights"))
         model = load_weights(create_architecture(arch), model_path)
         model = model.to(device).eval()
-    elif(model_type[0] == "L" and model_type[1] == "L"):
+    elif("LLM2CLIP" in model_type):
         print("Microsoft model")
         model = AutoModel.from_pretrained("microsoft/LLM2CLIP-Openai-L-14-336", torch_dtype=torch.float16, trust_remote_code=True)
         model = model.to(device).eval()
         model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
-        if(model_type[9] == "1"):
+        if("1_layers" in model_type):
             print("Linear SVM")
             regresser = nn.Linear(1024, 1).to(device)
-        elif(model_type[9] == "2"):
+        elif("2_layers" in model_type):
             print("Two layers shallow network")
             regresser = TwoRegressor(1024, hidden_size).to(device)
-        elif(model_type[9] == "3"):
+        elif("3_layers" in model_type):
             print("Three layers shallow network")
             regresser = ThreeRegressor(1024, hidden_size).to(device)
-        elif(model_type[9] == "4"):
+        elif("4_layers" in model_type):
             print("Four layers shallow network")
             regresser = FourRegressor(1024, hidden_size).to(device)
-        elif(model_type[9] == "5"):
+        elif("5_layers" in model_type):
             print("Five layers shallow network")
             regresser = FiveRegressor(1024, hidden_size).to(device)
         else:
             print("Could not identify depth of shallow model")
             exit()
         regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
-    elif(model_type[0] == "L" and model_type[1] == "o"):
+    elif("LongClip" in model_type):
         print("LongCLIP model")
         model, transform = longclip.load(os.path.join(script_dir, "LongCLIP/checkpoints/longclip-L.pt"), device=device)
         model = model.to(device).eval()
         model.visual.ln_post.register_forward_hook(get_activation('next_to_last_layer'))
-        if(model_type[9] == "1"):
+        if("1_layers" in model_type):
             print("Linear SVM")
             regresser = nn.Linear(1024, 1).to(device)
-        elif(model_type[9] == "2"):
+        elif("2_layers" in model_type):
             print("Two layers shallow network")
             regresser = TwoRegressor(1024, hidden_size).to(device)
-        elif(model_type[9] == "3"):
+        elif("3_layers" in model_type):
             print("Three layers shallow network")
             regresser = ThreeRegressor(1024, hidden_size).to(device)
-        elif(model_type[9] == "4"):
+        elif("4_layers" in model_type):
             print("Four layers shallow network")
             regresser = FourRegressor(1024, hidden_size).to(device)
-        elif(model_type[9] == "5"):
+        elif("5_layers" in model_type):
             print("Five layers shallow network")
             regresser = FiveRegressor(1024, hidden_size).to(device)
         else:
@@ -138,10 +138,10 @@ def test(input_csv, device, N, model_type, test_mode, batch_size = 1):
         print("Wrong model selection")
         exit()    
 
-    if(model_type[0] == "L" and model_type[1] == "L"):
+    if("LLM2CLIP" in model_type):
         print('input resize:', '336x336', flush=True)
         transform = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14-336")
-    elif(model_type[0] == "L" and model_type[1] == "o"):
+    elif("LongClip" in model_type):
         print('input resize:', '224x224', flush=True)
     else:
         print('input resize:', '224x224', flush=True)
@@ -153,7 +153,13 @@ def test(input_csv, device, N, model_type, test_mode, batch_size = 1):
     else:
         training_mode = "original"
 
-    test_dataset = createDataset(rootdataset, transform, device, False, False, training_mode, N, seed)
+    if(augmentations == 1):
+        do_aug = True
+    else:
+        do_aug = False
+    print("Augmentation seleceted: ", do_aug)
+
+    test_dataset = createDataset(rootdataset, transform, device, False, False, training_mode, N, seed, do_aug)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True)
 
     print("Testing images: ", len(test_dataset))
@@ -172,7 +178,7 @@ def test(input_csv, device, N, model_type, test_mode, batch_size = 1):
             outputs = None
             if(model_type == "original"):
                 outputs = model(total_images.clone().to(device)).cpu().squeeze().tolist()
-            elif(model_type[0] == "L" and model_type[1] == "o"):
+            elif("LongClip" in model_type):
                 _ = model.encode_image(total_images.clone().to(device))
                 next_to_last_layer_features = activations['next_to_last_layer']
                 outputs = regresser(next_to_last_layer_features.float()).squeeze().cpu().numpy()
@@ -206,9 +212,10 @@ if __name__ == "__main__":
     parser.add_argument("--device"     , '-d', type=str, help="Torch device", default='cuda:1')
     parser.add_argument("--model_type"     , '-m', type=str, help="Version of the model to be tested", default='1_layers_dataset_SD_0.05_optim_AdamW_N100')
     parser.add_argument("--test_mode"     , '-t', type=str, help="RAISE1k or FORLAB as the real images to test with", default='FORLAB')
+    parser.add_argument("--augmentations"     , '-a', type=int, help="If apply or not augmentations to images", default=1)
     args = vars(parser.parse_args())
     
-    table = test(args['in_csv'], args['device'], args['N'], args['model_type'], args['test_mode'])
+    table = test(args['in_csv'], args['device'], args['N'], args['model_type'], args['test_mode'], args['augmentations'])
 
     table.to_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "predictions/"+args['out_csv']), index=False)  # save the results as csv file
     

@@ -168,7 +168,7 @@ class LightShadowAdjustmentTransform:
 #------------------------------------------------------------------------------------------------------------
 
 class ImageDataset(Dataset):
-    def __init__(self, root, transform = None, device="cuda:0", train=False, debug=False, training_mode="SD", N=100, seed=42):
+    def __init__(self, root, transform = None, device="cuda:0", train=False, debug=False, training_mode="SD", N=100, seed=42, do_augs=True):
         super().__init__()
         torch.manual_seed(seed)
         random.seed(seed)
@@ -179,6 +179,7 @@ class ImageDataset(Dataset):
         self.train = train
         self.training_mode = training_mode
         self.StableDiffusion_index = 0
+        self.do_augs = do_augs
 
         self.synthetic_folders = [
             'dalle2',
@@ -294,9 +295,10 @@ class ImageDataset(Dataset):
             synthetic_image = transforms.ToTensor()(synthetic_image).to(self.device).unsqueeze(0)
             synthetic_images = [synthetic_image]
 
-            if self.augmentations:
+            if self.do_augs and self.augmentations:
                 for aug in self.augmentations:
                     synthetic_images.append(aug(synthetic_image))
+            
             if self.transform:
                 for i in range(len(synthetic_images)):
                     synthetic_images[i] = self.transform(synthetic_images[i])
@@ -313,7 +315,7 @@ class ImageDataset(Dataset):
                 synthetic_image = transforms.ToTensor()(synthetic_image).to(self.device).unsqueeze(0)
                 synthetic_images = [synthetic_image]
                                                                                                                 
-                if self.augmentations:
+                if self.do_augs and self.augmentations:
                     for aug in self.augmentations:
                         synthetic_images.append(aug(synthetic_image))
                 if self.transform:
@@ -325,8 +327,8 @@ class ImageDataset(Dataset):
 
         return torch.stack(real_images), tot_synthetic_images, tot_real_entries, tot_fake_entries
 
-def createDataset(rootdataset, transform, device="cuda:0", train=False, debug=False, training_mode="SD", N=100, seed=42):
-    dataset = ImageDataset(root=rootdataset, transform=transform, device=device, train=train, debug=debug, training_mode=training_mode, N=N, seed=seed)
+def createDataset(rootdataset, transform, device="cuda:0", train=False, debug=False, training_mode="SD", N=100, seed=42, do_augs=True):
+    dataset = ImageDataset(root=rootdataset, transform=transform, device=device, train=train, debug=debug, training_mode=training_mode, N=N, seed=seed, do_augs=do_augs)
     return dataset
 
 #------------------------------------------------------------------------------------------------------------
