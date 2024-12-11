@@ -6,7 +6,7 @@ import kornia.augmentation as K
 import kornia.enhance as E
 import torch
 from torch import nn
-
+'''
 activations = {}
 
 class SpatialRegressor(nn.Module):
@@ -63,3 +63,10 @@ spatial_regressor.to("cuda:1")
 
 heatmaps = spatial_regressor(spatial_features)
 print(heatmaps.shape)
+'''
+
+import os
+from LongCLIP.model import longclip
+script_dir = os.path.dirname(os.path.abspath(__file__))
+model, transform = longclip.load(os.path.join(script_dir, "LongCLIP/checkpoints/longclip-L.pt"), device="cuda:1")
+print()

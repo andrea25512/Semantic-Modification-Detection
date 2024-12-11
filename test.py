@@ -34,171 +34,105 @@ def get_config(model_name, weights_dir='./weights'):
     model_path = os.path.join(weights_dir, model_name, data['weights_file'])
     return data['model_name'], model_path, data['arch'], data['norm_type'], data['patch_size']
 
-def test(input_csv, device, N, model_type, test_mode, augmentations, batch_size = 1):
+def test(input_csv, device, N, model_type, is_forlab, is_augmentated):
     torch.manual_seed(seed)
     random.seed(seed)
+    # making the script runnable from anywhere
     script_dir = os.path.dirname(os.path.abspath(__file__))
     rootdataset = os.path.join(script_dir,input_csv)
 
-    if(test_mode == "FORLAB"):
-        FORLAB_real_samples = [f for f in os.listdir("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB") if os.path.isfile(os.path.join("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB", f))]
-        random.shuffle(FORLAB_real_samples)
-
-    model = None
-    regresser = None
-    if("1_layers" in model_type):
-        print("Linear SVM")
+    if("LLM2CLIP" not in model_type and "LongClip" not in model_type):
+        # here the standard CLIP model is loaded into VRAM, and the next to last feature extractor is initialized
         model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         model = model.to(device).eval()
         model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
-        regresser = nn.Linear(1024, 1).to(device)
-        regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
-    elif("2_layers" in model_type):
-        print("Two layers shallow network")
-        model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
-        model = model.to(device).eval()
-        model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
-        regresser = TwoRegressor(1024, hidden_size).to(device)
-        regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
-    elif("3_layers" in model_type):
-        print("Three layers shallow network")
-        model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
-        model = model.to(device).eval()
-        model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
-        regresser = ThreeRegressor(1024, hidden_size).to(device)
-        regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
-    elif("4_layers" in model_type):
-        print("Four layers shallow network")
-        model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
-        model = model.to(device).eval()
-        model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
-        regresser = FourRegressor(1024, hidden_size).to(device)
-        regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
-    elif("5_layers" in model_type):
-        print("Five layers shallow network")
-        model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
-        model = model.to(device).eval()
-        model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
-        regresser = FiveRegressor(1024, hidden_size).to(device)
-        regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
     elif(model_type == "original"):
-        print("original network")
+        # here the CLIP+SVM model from the Verdoliva paper is loaded into VRAM (it automatically outputs the next to last features)
         _, model_path, arch, norm_type, patch_size = get_config("clipdet_latent10k", weights_dir=os.path.join(script_dir,"weights"))
         model = load_weights(create_architecture(arch), model_path)
         model = model.to(device).eval()
     elif("LLM2CLIP" in model_type):
-        print("Microsoft model")
+        # here the LLM2CLIP model is loaded into VRAM, and the next to last feature extractor is initialized
         model = AutoModel.from_pretrained("microsoft/LLM2CLIP-Openai-L-14-336", torch_dtype=torch.float16, trust_remote_code=True)
         model = model.to(device).eval()
         model.vision_model.post_layernorm.register_forward_hook(get_activation('next_to_last_layer'))
-        if("1_layers" in model_type):
-            print("Linear SVM")
-            regresser = nn.Linear(1024, 1).to(device)
-        elif("2_layers" in model_type):
-            print("Two layers shallow network")
-            regresser = TwoRegressor(1024, hidden_size).to(device)
-        elif("3_layers" in model_type):
-            print("Three layers shallow network")
-            regresser = ThreeRegressor(1024, hidden_size).to(device)
-        elif("4_layers" in model_type):
-            print("Four layers shallow network")
-            regresser = FourRegressor(1024, hidden_size).to(device)
-        elif("5_layers" in model_type):
-            print("Five layers shallow network")
-            regresser = FiveRegressor(1024, hidden_size).to(device)
-        else:
-            print("Could not identify depth of shallow model")
-            exit()
-        regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
     elif("LongClip" in model_type):
-        print("LongCLIP model")
+        # here the LongCLIP model is loaded into VRAM, and the next to last feature extractor is initialized
         model, transform = longclip.load(os.path.join(script_dir, "LongCLIP/checkpoints/longclip-L.pt"), device=device)
         model = model.to(device).eval()
         model.visual.ln_post.register_forward_hook(get_activation('next_to_last_layer'))
-        if("1_layers" in model_type):
-            print("Linear SVM")
-            regresser = nn.Linear(1024, 1).to(device)
-        elif("2_layers" in model_type):
-            print("Two layers shallow network")
-            regresser = TwoRegressor(1024, hidden_size).to(device)
-        elif("3_layers" in model_type):
-            print("Three layers shallow network")
-            regresser = ThreeRegressor(1024, hidden_size).to(device)
-        elif("4_layers" in model_type):
-            print("Four layers shallow network")
-            regresser = FourRegressor(1024, hidden_size).to(device)
-        elif("5_layers" in model_type):
-            print("Five layers shallow network")
-            regresser = FiveRegressor(1024, hidden_size).to(device)
-        else:
-            print("Could not identify depth of shallow model")
-            exit()
-        regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt")))
     else:
-        print("Wrong model selection")
-        exit()    
+        raise ValueError("Could not identify type of feature extractor")  
+    
+    # one of the possible five network configurations is declared and then loaded also into VRAM
+    if("1_layers" in model_type):
+        regresser = nn.Linear(1024, 1).to(device)
+    elif("2_layers" in model_type):
+        regresser = TwoRegressor(1024, hidden_size).to(device)
+    elif("3_layers" in model_type):
+        regresser = ThreeRegressor(1024, hidden_size).to(device)
+    elif("4_layers" in model_type):
+        regresser = FourRegressor(1024, hidden_size).to(device)
+    elif("5_layers" in model_type):
+        regresser = FiveRegressor(1024, hidden_size).to(device)
+    else:
+        raise ValueError("Could not identify depth of shallow model")
+    regresser.load_state_dict(torch.load(os.path.join(script_dir, "weights/shallow/"+model_type+".pt"), weights_only=True))
 
+    # here the image preprocessing is selected based on the CLIP feature extractor version. In the case of LongCLIP the preprocesser is derived when the model is instantiated (thus that's why it cannot be found here below)
     if("LLM2CLIP" in model_type):
-        print('input resize:', '336x336', flush=True)
         transform = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14-336")
     elif("LongClip" in model_type):
-        print('input resize:', '224x224', flush=True)
+        pass
     else:
-        print('input resize:', '224x224', flush=True)
         transform = torch.nn.Sequential(TR.Resize((224, 224), interpolation='bicubic'), K.CenterCrop((224, 224)), E.Normalize(mean=(0.48145466, 0.4578275, 0.40821073),std=(0.26862954, 0.26130258, 0.27577711)))
-    print(flush=True)
 
-    if("dataset_SD" in model_type):
-        training_mode = "SD"
-    else:
-        training_mode = "original"
-
-    if(augmentations == 1):
-        do_aug = True
-    else:
-        do_aug = False
-    print("Augmentation seleceted: ", do_aug)
-
-    test_dataset = createDataset(rootdataset, transform, device, False, False, training_mode, N, seed, do_aug)
+    # here a custom dataset is instatiated, indicathing wether to apply or not agumentations, other than passing other parameters like the seed
+    test_dataset = createDataset(rootdataset=rootdataset, transform=transform, device=device, train=False, debug=False, training_mode=is_forlab, N=N, seed=seed, do_augs=is_augmentated)
+    # batch of dimension one for VRAM limits
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True)
 
-    print("Testing images: ", len(test_dataset))
-
+    # here the CSV from the predited logits is declared
     output = pandas.DataFrame(columns=['filename','clip','aug'])
 
-    ### training
+    #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     print("Running the Testing")
     with torch.no_grad():
         for index, (real_images, synthetic_images, tot_real_entries, tot_fake_entries) in enumerate(tqdm(test_loader, dynamic_ncols=True, file=sys.stderr)):
             total_images = torch.cat((real_images.squeeze(), synthetic_images.squeeze()), dim=0)
 
-            labels = torch.tensor(torch.cat((torch.zeros(real_images.shape[1]), torch.ones(synthetic_images.shape[1])), dim=0), dtype=torch.float32).to(device)
-            labels = 2 * labels - 1  # Convert labels from 0/1 to -1/+1
-
-            outputs = None
             if(model_type == "original"):
+                # call to the model in the Verdoliva paper 
                 outputs = model(total_images.clone().to(device)).cpu().squeeze().tolist()
             elif("LongClip" in model_type):
+                # call to the LongCLIP model 
                 _ = model.encode_image(total_images.clone().to(device))
                 next_to_last_layer_features = activations['next_to_last_layer']
                 outputs = regresser(next_to_last_layer_features.float()).squeeze().cpu().numpy()
             else:
+                # call to the CLIP and LLM2CLIP models
                 _ = model.get_image_features(pixel_values=total_images.clone().to(device))
                 next_to_last_layer_features = activations['next_to_last_layer']
                 outputs = regresser(next_to_last_layer_features.float()).squeeze().cpu().numpy()
 
+            # here the logits are paired with the image name and augmentation, in order to do in another file the metric calculation. The table will be saved to a CSV file
+            # even if we use the FORLAB dataset instead of the real_RAISE_1k, we still save the real images under the real_RAISE_1k name in order to have back compatibility with the metrics computation
             for idx, (ii, logit) in enumerate(zip(tot_real_entries + tot_fake_entries, outputs)):
                 aug_idx = idx % len(test_dataset.captions)
-                aug_name = test_dataset.captions[aug_idx]  # Select the correct augmentation name
+                # select the correct augmentation name
+                aug_name = test_dataset.captions[aug_idx]  
                 
                 entry = pandas.DataFrame.from_dict({
                     "filename": [ii][0],
                     "clip": [logit],
                     "aug": [aug_name]
                 })
-                output = pandas.concat([output, entry], ignore_index=True)
+                if output.empty:
+                    output = entry
+                else:
+                    output = pandas.concat([output, entry], ignore_index=True)
 
-    # save
+    # return the table
     return output
 
 
@@ -211,48 +145,53 @@ if __name__ == "__main__":
     parser.add_argument("--N"          , '-n', type=int, help="Size of the training N+N vectors", default=990)
     parser.add_argument("--device"     , '-d', type=str, help="Torch device", default='cuda:1')
     parser.add_argument("--model_type"     , '-m', type=str, help="Version of the model to be tested", default='1_layers_dataset_SD_0.05_optim_AdamW_N100')
-    parser.add_argument("--test_mode"     , '-t', type=str, help="RAISE1k or FORLAB as the real images to test with", default='FORLAB')
-    parser.add_argument("--augmentations"     , '-a', type=int, help="If apply or not augmentations to images", default=1)
+    parser.add_argument("--forlab"     , '-f', action="store_true", help="Enable testing with FORLAB as the synthetic images (default: False)")
+    parser.add_argument("--augmentations"     , '-a', action="store_false", help="Apply augmentations to images (default: True)")
     args = vars(parser.parse_args())
     
-    table = test(args['in_csv'], args['device'], args['N'], args['model_type'], args['test_mode'], args['augmentations'])
+    table = test(args['in_csv'], args['device'], args['N'], args['model_type'], args['forlab'], args['augmentations'])
 
     table.to_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "predictions/"+args['out_csv']), index=False)  # save the results as csv file
     
     print("Testing completed")
+    #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # here we continue the pipeline by calling automatically the metrics computation on the CSV
 
-    # Define the parameters to pass
+    # we reuse most of the parameters that this code recieved from launch, but most importantly we pass the newely constructed CSV name
     params = ["--in_csv", os.path.join(os.path.dirname(os.path.abspath(__file__)), args['in_csv']), "--out_csv", f"predictions/{args['out_csv']}", "--metrics", "auc", "--save_tab", f"performances/{args['out_csv']}"]
 
-    # Construct the command
     command = ["python3", os.path.join(os.path.dirname(os.path.abspath(__file__)),"compute_metrics.py")] + params
-    print(command)
-    # Launch the script and stream its output
+    
+    # launch the script and stream its output
     try:
         with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1) as process:
             for line in process.stdout:
-                print(line, end="")  # Print each line in real time
+                # print each line in real time
+                print(line, end="")
             for err in process.stderr:
-                print(err, end="")  # Print errors in real time (if any)
+                # print errors in real time (if any)
+                print(err, end="") 
     except subprocess.CalledProcessError as e:
         print("An error occurred:")
         print(e.stderr)
 
     #-----------------------------------------------------------------------------------------------------------------------------------------------------
+    # here we continue the pipeline by calling automatically an additional metrics computation on the CSV. This one wil lcreate the AUC scores for each specific augmentation
 
-    # Define the parameters to pass
+    # we reuse most of the parameters that this code recieved from launch, but most importantly we pass the newely constructed CSV name
     params = ["--in_csv", os.path.join(os.path.dirname(os.path.abspath(__file__)), args['in_csv']), "--out_csv", f"predictions/{args['out_csv']}", "--metrics", "auc", "--save_tab", f"performances/TABLE_{args['out_csv']}"]
 
-    # Construct the command
     command = ["python3", os.path.join(os.path.dirname(os.path.abspath(__file__)),"augmentation_wise_metrics.py")] + params
-    print(command)
-    # Launch the script and stream its output
+    
+    # launch the script and stream its output
     try:
         with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1) as process:
             for line in process.stdout:
-                print(line, end="")  # Print each line in real time
+                # print each line in real time
+                print(line, end="") 
             for err in process.stderr:
-                print(err, end="")  # Print errors in real time (if any)
+                # print errors in real time (if any)
+                print(err, end="")  
     except subprocess.CalledProcessError as e:
         print("An error occurred:")
         print(e.stderr)

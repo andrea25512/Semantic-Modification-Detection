@@ -32,7 +32,7 @@ class GaussianBlurTransform:
         self.debug = debug
 
     def __call__(self, img_tensor):
-        # Ensure kernel size is odd and within the specified range
+        # ensure kernel size is odd and within the specified range
         kernel_sizes = [k for k in range(self.kernel_size_range[0], self.kernel_size_range[1]+1, 2)]
         kernel_size = random.choice(kernel_sizes)
         sigma = random.uniform(*self.sigma_range)
@@ -46,6 +46,7 @@ class MedianBlurTransform:
         self.debug = debug
 
     def __call__(self, img_tensor):
+        # ensure kernel size is odd and within the specified range
         kernel_sizes = [k for k in range(self.kernel_size_range[0], self.kernel_size_range[1]+1, 2)]
         kernel_size = random.choice(kernel_sizes)
         if(self.debug):
@@ -168,7 +169,7 @@ class LightShadowAdjustmentTransform:
 #------------------------------------------------------------------------------------------------------------
 
 class ImageDataset(Dataset):
-    def __init__(self, root, transform = None, device="cuda:0", train=False, debug=False, training_mode="SD", N=100, seed=42, do_augs=True):
+    def __init__(self, root, transform = None, device="cuda:0", train=False, debug=False, training_mode=False, N=100, seed=42, do_augs=True):
         super().__init__()
         torch.manual_seed(seed)
         random.seed(seed)
@@ -181,6 +182,7 @@ class ImageDataset(Dataset):
         self.StableDiffusion_index = 0
         self.do_augs = do_augs
 
+        # the four possible standard dynthetic dataset types
         self.synthetic_folders = [
             'dalle2',
             'dalle3',
@@ -188,6 +190,7 @@ class ImageDataset(Dataset):
             'firefly'
         ]
 
+        # in total there are 12 augmentations, implemented via kornia (a GPU driven alternative to the torchvision transforms) that have the novelty of changing each call the parameters of the augmentation under a manually choosen range
         self.augmentations = [
             EqualizeTransform(),
             GaussianBlurTransform(debug=debug),
@@ -203,6 +206,7 @@ class ImageDataset(Dataset):
             LightShadowAdjustmentTransform(debug=debug)
         ]
 
+        # here is the textual definition of the tranformations, utilized only for debugginf purposes
         self.captions = [
             "Original",
             "Equalize",
@@ -218,22 +222,28 @@ class ImageDataset(Dataset):
             "Wht/Drk",
             "Shadow"
         ]
+
+        # sampled N real images from the dictionary. The semi-random sampling is done on the last 1000 entries since the image dictionary is constructed as [synthetic1, synthetic2, synthetic3, synthetic4, real], where each subset is of size 1000 (5000 entries total)
+        # this approach is utilized, instead of using a random sampling on the dataset iself because this way we have the same selection of the Baseline code, that doesn't utilize a dataset and dataloder object
         table = pandas.read_csv(self.root)
         sample = table.iloc[-1000:].sample(n=N, random_state=seed).index
         if(not train):
+            # we get the test dataset samples by simply subtrcting from the original one the sample of the training set/ The training set is replicated thanks to the fixed seed
             sample = table.iloc[-1000:].index.difference(sample)
         self.RAISE_real_images = table.loc[sample].reset_index(drop=True)
-
+        # if during training the StableDiffusion datast was utilized (alternative to synthetic), we need to test the distribution shift in another real dataset, in this case the FORLAB was selected
         self.FORLAB_real_samples = [f for f in os.listdir("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB") if os.path.isfile(os.path.join("/media/mmlab/Volume2/TrueFake/PreSocial/Real/FORLAB", f))]
+        # a semi-random shuffle of the selected N indexes is applied, otherwise we cannot test the last images if not with low N number
         random.shuffle(self.FORLAB_real_samples)
 
     def __len__(self):
         return len(self.RAISE_real_images)
 
     def __getitem__(self, index):
+        # the name of the image is extracted, removing all of the path information
         real_image_name = self.RAISE_real_images.loc[index]["filename"].split("/")[-1]
         
-        if(self.train or (not self.train and not self.training_mode=="SD")):
+        if(self.train or (not self.train and not self.training_mode)):
             # to the right of the OR is the fallback to the original version, so when self.train=False and training_mode!=SD
             # thus we have both training and testing that are done with real_RAISE_1k
             real_image_path = os.path.join(os.path.dirname(os.path.abspath(self.root)), f"synthbuster/real_RAISE_1k/{real_image_name}")
@@ -264,41 +274,53 @@ class ImageDataset(Dataset):
         resize = TR.Resize((new_height, new_width))
         real_image = resize(real_image)
         
+        # in all the images given to the model we include the original real image
         real_images = [real_image]
         tot_real_entries = []
 
+        # if the augmentations are selected, then we proceed to ally all 12 of them
         if self.augmentations:
             for aug in self.augmentations:
                 real_images.append(aug(real_image))
 
-        #show_images_with_captions([img.cpu() for img in real_images],self.captions)
+        # for debbugging purposes an image containing all the augmented + the real version of the image are generated and saved
+        # show_images_with_captions([img.cpu() for img in real_images], self.captions)
 
+        # here the preprocessing operations are applied to the 13 real images
         if self.transform:
             for i in range(len(real_images)):
                 real_images[i] = self.transform(real_images[i])
-                # as written earlier, we save all of the logits under the real_RAISE_1k for retro-compatibility with the original evaluation script
+                # as written earlier, we save all of the logits under the real_RAISE_1k for retro-compatibility with the original evaluation script (even if the FORLAB real dataset is utilized)
                 tot_real_entries.append("synthbuster/real_RAISE_1k/"+real_image_name)
 
+        # we define the arrays where to put the images istelf and their name respectively
         tot_synthetic_images = torch.Tensor([]).to(self.device)
         tot_fake_entries = []
 
+        # if we are in the training case we do a random selection, otherwise we select all of the possible four fake variants
         tmp = self.synthetic_folders.copy()
         if(self.train):
             tmp = [random.choice(tmp)]
 
-        if(self.train and self.training_mode=="SD"):
-            # we need to train with real_RAISE_1k + Stable diffusion, if the old version of the code is utilized then the right part of the AND will make the code jump to the 4 syntetic versions isntead of returning SD images
-            # we need to test FORLAB + four syntetic variants
+        if(self.train and self.training_mode):
+            # we need to *train* with real_RAISE_1k + Stable diffusion, if the old version of the code is utilized then the right part of the AND will make the code jump to the 4 syntetic versions instead of returning SD images
+            # we need to *test* FORLAB + four syntetic variants
+
+            # so here we ignore the random selection of one of the four synthetic verions, as we load a fake one from the StableDiffusion dataset
             synthetic_image_path = os.path.join("/media/mmlab/Datasets_4TB/ceron_train/StableDiffusion35/no_PP/"+f"{self.StableDiffusion_index:05}.png")
+            # the images are named via number, to be associated with the pseudo-random selection of real_RAISE_1k images with the seed to 42
             self.StableDiffusion_index = self.StableDiffusion_index + 1
+            # in all the images given to the model we include the original synthetic image
             synthetic_image = Image.open(synthetic_image_path).convert('RGB')
             synthetic_image = transforms.ToTensor()(synthetic_image).to(self.device).unsqueeze(0)
             synthetic_images = [synthetic_image]
 
+            # if the augmentations are selected, then we proceed to ally all 12 of them
             if self.do_augs and self.augmentations:
                 for aug in self.augmentations:
                     synthetic_images.append(aug(synthetic_image))
             
+            # here the preprocessing operations are applied to the 13 real images
             if self.transform:
                 for i in range(len(synthetic_images)):
                     synthetic_images[i] = self.transform(synthetic_images[i])
@@ -307,17 +329,22 @@ class ImageDataset(Dataset):
             
             tot_synthetic_images = torch.cat((tot_synthetic_images, torch.stack(synthetic_images)), dim=0)
         else:
+            # we cycle for each synthetic iamge, so in the case of trainig there will be 1 cycle, instead during testing there will be 4 cycles
             for synthetic_type in tmp:
+                # the "original" synthetic image is loaded into memory
                 synthetic_folder = os.path.join(os.path.dirname(os.path.abspath(self.root)), f"synthbuster/{synthetic_type}")
                 synthetic_image_path = os.path.join(synthetic_folder, real_image_name)
-
+                # in all the images given to the model we include the original synthetic image
                 synthetic_image = Image.open(synthetic_image_path).convert('RGB')
                 synthetic_image = transforms.ToTensor()(synthetic_image).to(self.device).unsqueeze(0)
                 synthetic_images = [synthetic_image]
-                                                                                                                
+
+                # if the augmentations are selected, then we proceed to ally all 12 of them                                                                                  
                 if self.do_augs and self.augmentations:
                     for aug in self.augmentations:
                         synthetic_images.append(aug(synthetic_image))
+
+                # here the preprocessing operations are applied to the 13 real images
                 if self.transform:
                     for i in range(len(synthetic_images)):
                         synthetic_images[i] = self.transform(synthetic_images[i])
@@ -327,7 +354,7 @@ class ImageDataset(Dataset):
 
         return torch.stack(real_images), tot_synthetic_images, tot_real_entries, tot_fake_entries
 
-def createDataset(rootdataset, transform, device="cuda:0", train=False, debug=False, training_mode="SD", N=100, seed=42, do_augs=True):
+def createDataset(rootdataset, transform, device="cuda:0", train=False, debug=False, training_mode=False, N=100, seed=42, do_augs=True):
     dataset = ImageDataset(root=rootdataset, transform=transform, device=device, train=train, debug=debug, training_mode=training_mode, N=N, seed=seed, do_augs=do_augs)
     return dataset
 
@@ -350,3 +377,5 @@ def show_images_with_captions(images, captions, nrow=4):
         axes[i].axis('off') 
 
     fig.savefig("real2.png")
+    # the program is then terminated because otherwise there will be generated and saved one image for each sample
+    exit()
