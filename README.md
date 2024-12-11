@@ -88,6 +88,6 @@ python augmentation_wise_metrics.py --in_csv data/commercial_tools.csv --out_csv
 ```
 
 ## Other versions
-Another version of this code, that applied augmentations during training and testing, can be found in the `Augmentations` branch
+Another version of this code, that does not apply augmentations during training and testing, can be found in the `Baseline` branch
 
 Another version of this code, that instead of detecting if an image is real or fake, detects how mutch or where the inpainting was applied can be found in the `Inpainting` branch
