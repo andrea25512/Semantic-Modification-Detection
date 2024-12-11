@@ -281,7 +281,7 @@ def make_normalize(norm_type):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         )
     elif norm_type == "clip":
-        print("normalize CLIP")
+        #print("normalize CLIP")
         transforms_list.append(transforms.ToTensor())
         transforms_list.append(
             transforms.Normalize(
